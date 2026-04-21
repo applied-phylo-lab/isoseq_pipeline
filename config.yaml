@@ -1,0 +1,53 @@
+results_dir: "/local/storage/kav67/tufted_duck/results"
+
+samples:
+  - SRR13570362
+  - SRR13570363
+  - SRR13570364
+  - SRR13570365
+  - SRR13570376
+  - SRR13570377
+
+# ─── Input mode ───────────────────────────────────────────────────────────────
+# "raw_bam"            : start from raw PacBio HiFi BAM files; the pipeline
+#                        runs lima → isoseq refine → isoseq cluster2 for you.
+# "preprocessed_fastq" : start from FASTQ files that have already gone through
+#                        the IsoSeq preprocessing steps (e.g. clustered reads
+#                        exported from SMRT Link or a previous run).
+input_mode: "preprocessed_fastq"
+
+# ─── Input paths (raw_bam mode) ───────────────────────────────────────────────
+hifi_bam: "data/{sample}/hifi_reads.bam"
+primers_fasta: "data/primers.fasta"
+
+# ─── Input paths (preprocessed_fastq mode) ────────────────────────────────────
+# Path to the FASTQ file for each sample.  Use {sample} as a placeholder.
+preprocessed_fastq: "/local/storage/kav67/tufted_duck/{sample}.fastq"
+
+# ─── V gene FASTA databases — one file per locus ──────────────────────────────
+# Each FASTA contains all germline V genes for that locus.
+vgene_loci:
+  IGH: "data/vgenes/tufted_duck_IGH.fasta"
+  IGL: "data/vgenes/tufted_duck_IGL.fasta"
+
+# ─── IsoSeq parameters (raw_bam mode only) ────────────────────────────────────
+require_polya: true          # pass --require-polya to isoseq refine
+use_cluster2: true           # use cluster2 (recommended) vs legacy cluster
+include_singletons: true     # keep singletons from cluster2
+
+# ─── Alignment / filtering parameters ────────────────────────────────────────
+min_alignment_identity: 0.85  # minimum identity to keep a transcript as IG
+min_alignment_coverage: 0.50  # minimum fraction of V gene covered
+
+# ─── Top-N alignment analysis (gene conversion evaluation) ────────────────────
+top_n_alignments: 5
+
+# ─── Minimap2 preset ──────────────────────────────────────────────────────────
+# splice:hq : high-quality cDNA / IsoSeq reads — correct for this pipeline.
+#             Uses k=15 (seeds well on short ~300 bp V gene references) and
+#             splice-aware parameters suited to the read characteristics of
+#             full-length cDNA, even when the V gene reference is unspliced.
+# map-hifi  : genomic HiFi mapping — DO NOT use here. k=19 and a minimum
+#             chaining score of 80 will filter out virtually all alignments
+#             against the short V gene references.
+minimap2_preset: "splice:hq"

@@ -1,0 +1,10 @@
+name: isoseq_env
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - pbccs
+  - lima
+  - isoseq3
+  - samtools

@@ -1,0 +1,14 @@
+# Claude Code
+.claude/
+
+# Snakemake
+.snakemake/
+__pycache__/
+
+# Results and logs (large; tracked separately or via config)
+results/
+logs/
+
+# Conda environments (built locally)
+.conda/
+envs/.conda/

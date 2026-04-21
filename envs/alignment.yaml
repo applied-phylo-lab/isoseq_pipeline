@@ -1,0 +1,12 @@
+name: alignment_env
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - snakemake >=7.0
+  - minimap2 >=2.26
+  - python >=3.10
+  - pandas
+  - numpy
+  - matplotlib
