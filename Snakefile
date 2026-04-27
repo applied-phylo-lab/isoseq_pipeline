@@ -23,9 +23,18 @@ def preprocessed_fastq(wildcards):
 rule all:
     input:
         expand(f"{RESULTS}/{{sample}}/alignment/ig_transcripts.fasta", sample=SAMPLES),
+        expand(f"{RESULTS}/{{sample}}/alignment/combined_ig_transcripts.fasta", sample=SAMPLES),
+        expand(f"{RESULTS}/{{sample}}/alignment/merge_stats.tsv", sample=SAMPLES),
         expand(f"{RESULTS}/{{sample}}/analysis/exact_match_summary.tsv", sample=SAMPLES),
         expand(f"{RESULTS}/{{sample}}/analysis/top{TOP_N}_alignments.tsv", sample=SAMPLES),
         expand(f"{RESULTS}/{{sample}}/analysis/summary_plot.pdf", sample=SAMPLES),
+        f"{RESULTS}/combined/combined_summary_plot.pdf",
+        f"{RESULTS}/combined/pooled_summary_plot.pdf",
+        f"{RESULTS}/combined/IGH_gene_usage.tsv",
+        f"{RESULTS}/combined/IGL_gene_usage.tsv",
+        f"{RESULTS}/combined/identity_analysis_plot.pdf",
+        f"{RESULTS}/combined/gene_identity_stats.tsv",
+        f"{RESULTS}/combined/alignment_position_map.pdf",
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -149,6 +158,7 @@ rule minimap2_align_filter:
 
 rule filter_ig_transcripts:
     input:
+        script="scripts/filter_ig_transcripts.py",
         transcripts=f"{RESULTS}/{{sample}}/isoseq/clustered.fasta",
         pafs=expand(f"{RESULTS}/{{sample}}/alignment/{{locus}}.paf",
                     locus=LOCI, allow_missing=True),
@@ -158,7 +168,7 @@ rule filter_ig_transcripts:
         stats=f"{RESULTS}/{{sample}}/alignment/filter_stats.tsv",
     params:
         min_identity=config["min_alignment_identity"],
-        min_coverage=config["min_alignment_coverage"],
+        min_coverage_bp=config["min_alignment_coverage_bp"],
     log:
         f"{RESULTS}/logs/{{sample}}/filter_ig.log",
     shell:
@@ -166,18 +176,97 @@ rule filter_ig_transcripts:
         "--transcripts {input.transcripts} "
         "--pafs {input.pafs} "
         "--min-identity {params.min_identity} "
-        "--min-coverage {params.min_coverage} "
+        "--min-coverage-bp {params.min_coverage_bp} "
         "--out-fasta {output.fasta} "
         "--out-ids {output.ids} "
         "--out-stats {output.stats} "
         "2>{log}"
 
 
-# ─── Step 7: Detailed alignment with secondary hits (IG transcripts only) ─────
+# ─── Step 7a: Diversity Analyzer (immunotools) ───────────────────────────────
+# Run IGH and IGL separately because tufted_duck has no IGK germline sequences.
+# vj_finder requires equal V and J database counts, which breaks with empty IGK files.
+
+rule run_diversity_analyzer_igh:
+    input:
+        transcripts=f"{RESULTS}/{{sample}}/isoseq/clustered.fasta",
+    output:
+        fasta=f"{RESULTS}/{{sample}}/immunotools/igh/cleaned_sequences.fasta",
+    params:
+        outdir=f"{RESULTS}/{{sample}}/immunotools/igh",
+        immunotools=config["immunotools_path"],
+    log:
+        f"{RESULTS}/logs/{{sample}}/diversity_analyzer_igh.log",
+    threads: 16
+    shell:
+        "python {params.immunotools} "
+        "-i {input.transcripts} "
+        "-o {params.outdir} "
+        "--org tufted_duck "
+        "-l IGH "
+        "-t {threads} "
+        "--skip-plots "
+        "2>{log}"
+
+
+rule run_diversity_analyzer_igl:
+    input:
+        transcripts=f"{RESULTS}/{{sample}}/isoseq/clustered.fasta",
+    output:
+        fasta=f"{RESULTS}/{{sample}}/immunotools/igl/cleaned_sequences.fasta",
+    params:
+        outdir=f"{RESULTS}/{{sample}}/immunotools/igl",
+        immunotools=config["immunotools_path"],
+    log:
+        f"{RESULTS}/logs/{{sample}}/diversity_analyzer_igl.log",
+    threads: 16
+    shell:
+        "python {params.immunotools} "
+        "-i {input.transcripts} "
+        "-o {params.outdir} "
+        "--org tufted_duck "
+        "-l IGL "
+        "-t {threads} "
+        "--skip-plots "
+        "2>{log}"
+
+
+rule combine_diversity_analyzer:
+    input:
+        igh=f"{RESULTS}/{{sample}}/immunotools/igh/cleaned_sequences.fasta",
+        igl=f"{RESULTS}/{{sample}}/immunotools/igl/cleaned_sequences.fasta",
+    output:
+        fasta=f"{RESULTS}/{{sample}}/immunotools/cleaned_sequences.fasta",
+    shell:
+        "cat {input.igh} {input.igl} > {output.fasta}"
+
+
+# ─── Step 7b: Merge minimap2 + immunotools filtered sets ─────────────────────
+
+rule merge_ig_transcripts:
+    input:
+        script="scripts/merge_ig_fastas.py",
+        minimap_fasta=f"{RESULTS}/{{sample}}/alignment/ig_transcripts.fasta",
+        immunotools_fasta=f"{RESULTS}/{{sample}}/immunotools/cleaned_sequences.fasta",
+    output:
+        fasta=f"{RESULTS}/{{sample}}/alignment/combined_ig_transcripts.fasta",
+        stats=f"{RESULTS}/{{sample}}/alignment/merge_stats.tsv",
+    log:
+        f"{RESULTS}/logs/{{sample}}/merge_ig.log",
+    shell:
+        "python scripts/merge_ig_fastas.py "
+        "--minimap-fasta {input.minimap_fasta} "
+        "--immunotools-fasta {input.immunotools_fasta} "
+        "--out-fasta {output.fasta} "
+        "--out-stats {output.stats} "
+        "2>{log}"
+
+
+# ─── Step 7c: Detailed alignment with secondary hits (combined transcripts) ───
 
 rule minimap2_align_detailed:
     input:
-        transcripts=f"{RESULTS}/{{sample}}/alignment/ig_transcripts.fasta",
+        transcripts=f"{RESULTS}/{{sample}}/alignment/combined_ig_transcripts.fasta",
         vgenes=lambda wc: config["vgene_loci"][wc.locus],
     output:
         paf=f"{RESULTS}/{{sample}}/alignment/{{locus}}_detailed.paf",
@@ -199,6 +288,7 @@ rule minimap2_align_detailed:
 
 rule analyze_exact_matches:
     input:
+        script="scripts/analyze_exact_matches.py",
         pafs=expand(f"{RESULTS}/{{sample}}/alignment/{{locus}}_detailed.paf",
                     locus=LOCI, allow_missing=True),
         vgene_fastas=list(config["vgene_loci"].values()),
@@ -220,6 +310,7 @@ rule analyze_exact_matches:
 
 rule analyze_top_alignments:
     input:
+        script="scripts/analyze_top_alignments.py",
         pafs=expand(f"{RESULTS}/{{sample}}/alignment/{{locus}}_detailed.paf",
                     locus=LOCI, allow_missing=True),
     output:
@@ -236,10 +327,11 @@ rule analyze_top_alignments:
         "2>{log}"
 
 
-# ─── Step 10: Summary plots ────────────────────────────────────────────────────
+# ─── Step 10: Per-sample summary plots ────────────────────────────────────────
 
 rule plot_summary:
     input:
+        script="scripts/plot_summary.py",
         exact=f"{RESULTS}/{{sample}}/analysis/exact_match_summary.tsv",
         top_aln=f"{RESULTS}/{{sample}}/analysis/top{TOP_N}_alignments.tsv",
     output:
@@ -250,5 +342,62 @@ rule plot_summary:
         "python scripts/plot_summary.py "
         "--exact-matches {input.exact} "
         "--top-alignments {input.top_aln} "
+        "--output {output} "
+        "2>{log}"
+
+
+# ─── Step 11: Combined cross-sample plot ──────────────────────────────────────
+
+rule plot_combined:
+    input:
+        script="scripts/plot_combined.py",
+        top_alns=expand(f"{RESULTS}/{{sample}}/analysis/top{TOP_N}_alignments.tsv",
+                        sample=SAMPLES),
+        exact_per_transcript=expand(
+            f"{RESULTS}/{{sample}}/analysis/exact_match_per_transcript.tsv",
+            sample=SAMPLES),
+        exact_summaries=expand(
+            f"{RESULTS}/{{sample}}/analysis/exact_match_summary.tsv",
+            sample=SAMPLES),
+    output:
+        plot=f"{RESULTS}/combined/combined_summary_plot.pdf",
+        pooled_summary=f"{RESULTS}/combined/pooled_summary_plot.pdf",
+        igh_usage=f"{RESULTS}/combined/IGH_gene_usage.tsv",
+        igl_usage=f"{RESULTS}/combined/IGL_gene_usage.tsv",
+        identity_plot=f"{RESULTS}/combined/identity_analysis_plot.pdf",
+        identity_tsv=f"{RESULTS}/combined/gene_identity_stats.tsv",
+    params:
+        samples=" ".join(SAMPLES),
+    log:
+        f"{RESULTS}/logs/combined/combined_plot.log",
+    shell:
+        "python scripts/plot_combined.py "
+        "--top-alns {input.top_alns} "
+        "--exact-per-transcript {input.exact_per_transcript} "
+        "--exact-summaries {input.exact_summaries} "
+        "--samples {params.samples} "
+        "--output {output.plot} "
+        "--out-pooled-summary {output.pooled_summary} "
+        "--out-igh-usage {output.igh_usage} "
+        "--out-igl-usage {output.igl_usage} "
+        "--out-identity-plot {output.identity_plot} "
+        "--out-identity-tsv {output.identity_tsv} "
+        "2>{log}"
+
+
+# ─── Step 12: Alignment position maps (match vs mismatch per V gene) ──────────
+
+rule plot_alignment_positions:
+    input:
+        script="scripts/plot_alignment_positions.py",
+        pafs=expand(f"{RESULTS}/{{sample}}/alignment/{{locus}}_detailed.paf",
+                    sample=SAMPLES, locus=LOCI),
+    output:
+        f"{RESULTS}/combined/alignment_position_map.pdf",
+    log:
+        f"{RESULTS}/logs/combined/alignment_positions.log",
+    shell:
+        "python scripts/plot_alignment_positions.py "
+        "--pafs {input.pafs} "
         "--output {output} "
         "2>{log}"

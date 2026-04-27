@@ -8,8 +8,12 @@ top alignments cover overlapping or adjacent transcript regions at high
 Metrics per alignment rank:
   - gene name + locus
   - identity     : n_matches / aln_block_len
-  - v_coverage   : fraction of V gene length covered (aln_block / target_len)
-  - query_frac   : fraction of transcript covered  (aln_block / query_len)
+  - v_coverage   : (target_end - target_start) / target_len  — fraction of the
+                   V gene spanned; always in [0, 1].  This is NOT aln_block /
+                   target_len: minimap2 sets aln_block = max(query_span,
+                   target_span), so insertions in the transcript inflate it
+                   above target_len and push coverage above 1.
+  - query_frac   : fraction of transcript covered  (query_end - query_start) / query_len
   - query_start/end on transcript
   - delta_to_rank1_identity : how much identity drops from best hit
 """
@@ -26,26 +30,38 @@ def parse_paf(paf_path):
             if line.startswith("#") or not line.strip():
                 continue
             f = line.rstrip().split("\t")
-            n_matches = int(f[9])
-            aln_block = int(f[10])
+            n_matches  = int(f[9])
+            aln_block  = int(f[10])
             target_len = int(f[6])
-            query_len = int(f[1])
+            target_start = int(f[7])
+            target_end   = int(f[8])
+            query_len    = int(f[1])
+            query_start  = int(f[2])
+            query_end    = int(f[3])
+            target_span  = target_end - target_start
+            query_span   = query_end  - query_start
             yield {
-                "query": f[0],
-                "query_len": query_len,
-                "query_start": int(f[2]),
-                "query_end": int(f[3]),
-                "strand": f[4],
-                "gene": f[5],
-                "target_len": target_len,
-                "n_matches": n_matches,
-                "aln_block": aln_block,
-                "mapq": int(f[11]),
-                "locus": locus,
-                "identity": n_matches / aln_block if aln_block > 0 else 0.0,
-                "v_coverage": aln_block / target_len if target_len > 0 else 0.0,
-                "query_frac": aln_block / query_len if query_len > 0 else 0.0,
-                "is_exact": (aln_block == target_len and n_matches == target_len),
+                "query":        f[0],
+                "query_len":    query_len,
+                "query_start":  query_start,
+                "query_end":    query_end,
+                "strand":       f[4],
+                "gene":         f[5],
+                "target_len":   target_len,
+                "target_start": target_start,
+                "target_end":   target_end,
+                "n_matches":    n_matches,
+                "aln_block":    aln_block,
+                "mapq":         int(f[11]),
+                "locus":        locus,
+                "identity":     n_matches / aln_block if aln_block > 0 else 0.0,
+                # target_span / target_len: always ≤ 1; unaffected by insertions
+                "v_coverage":   target_span / target_len if target_len > 0 else 0.0,
+                "query_frac":   query_span  / query_len  if query_len  > 0 else 0.0,
+                # exact match: full target spanned, same number of query bases (no indels), no mismatches
+                "is_exact": (target_span == target_len
+                             and query_span == target_len
+                             and n_matches == target_len),
             }
 
 

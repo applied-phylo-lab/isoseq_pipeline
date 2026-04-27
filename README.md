@@ -147,7 +147,7 @@ Outputs:
 
 **Interpreting gene conversion:** birds use gene conversion to diversify IG sequences — donor pseudogenes overwrite segments of the functional V gene.  A transcript derived from gene conversion will show a small `delta_identity_from_rank1` between rank-1 and rank-2 hits because multiple V genes explain the sequence nearly equally well.  A large delta indicates a single dominant donor.
 
-### Step 10 — Summary plots (`plot_summary`)
+### Step 10 — Per-sample summary plots (`plot_summary`)
 
 `scripts/plot_summary.py` produces a five-panel PDF (`summary_plot.pdf`):
 
@@ -156,6 +156,16 @@ Outputs:
 3. **Delta-identity histogram** — distribution of rank1 − rank2 identity; low values suggest gene conversion
 4. **V gene coverage distribution** — fraction of each V gene covered by the best alignment
 5. **Per-transcript identity decay** — identity across ranks 1–N for a random sample of transcripts (median overlaid in red)
+
+### Step 11 — Combined cross-sample plot (`plot_combined`)
+
+`scripts/plot_combined.py` pools results from all samples and produces `combined/combined_summary_plot.pdf` with five panels:
+
+1. **IGH V gene usage heatmap** — genes (rows) × samples (columns), colour = transcript count; top 20 genes shown. Immediately shows which V genes dominate across experiments.
+2. **IGL V gene usage heatmap** — same layout for IGL.
+3. **Locus assignment stacked bar** — per sample, how many IG transcripts were assigned IGH-only, IGL-only, both loci, or other. Shows the overall composition of each library.
+4. **Co-occurring transcripts bar** — count of transcripts with hits to **both** IGH and IGL V genes within the top-N alignments. A transcript showing strong hits to both loci is a particularly reliable antibody transcript candidate, since it is highly unlikely for a non-IG read to align well to genes from two separate loci simultaneously.
+5. **IGH × IGL combination heatmap** — for co-occurring transcripts, which IGH gene is paired with which IGL gene (pooled across samples). Identical combinations appearing across multiple samples suggest a dominant functional VDJ + VJ pairing in the population.
 
 ---
 
@@ -175,17 +185,23 @@ Outputs:
 └── {sample}/
     ├── isoseq/
     │   └── clustered.fasta        # input to alignment steps
+    ├── immunotools/
+    │   └── cleaned_sequences.fasta          # diversity_analyzer output
     ├── alignment/
-    │   ├── {locus}.paf            # screening alignments
-    │   ├── {locus}_detailed.paf   # multi-hit alignments
-    │   ├── ig_transcripts.fasta   # filtered IG transcripts
+    │   ├── {locus}.paf                      # screening alignments (minimap2)
+    │   ├── {locus}_detailed.paf             # multi-hit alignments (combined set)
+    │   ├── ig_transcripts.fasta             # minimap2-filtered transcripts
     │   ├── ig_transcript_ids.txt
-    │   └── filter_stats.tsv
+    │   ├── filter_stats.tsv
+    │   ├── combined_ig_transcripts.fasta    # union of minimap2 + immunotools
+    │   └── merge_stats.tsv                  # overlap counts between the two methods
     └── analysis/
         ├── exact_match_summary.tsv
         ├── exact_match_per_transcript.tsv
         ├── top{N}_alignments.tsv
         └── summary_plot.pdf
+└── combined/
+    └── combined_summary_plot.pdf  # cross-sample combined analysis
 ```
 
 ---

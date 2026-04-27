@@ -3,10 +3,16 @@ Detect germline V gene sequences that appear EXACTLY (100% identity, 100%
 gene coverage) within IG transcripts, indicating a functionally rearranged
 (VDJ-recombined) locus.
 
-A match is "exact" when:
-  - alignment block length == target (V gene) length  → no indels
-  - n_matches == target length                        → no mismatches
+A match is "exact" when all three conditions hold:
+  - target_end - target_start == target_len  → full V gene is spanned
+  - query_end  - query_start  == target_len  → same number of transcript bases (no indels)
+  - n_matches == target_len                  → no mismatches
   i.e. the complete V gene sequence is present verbatim inside the transcript.
+
+  Note: do NOT use aln_block == target_len for this test.  minimap2 sets
+  aln_block = max(query_span, target_span), so insertions in the transcript
+  inflate it above target_len and the test silently fails for otherwise-perfect
+  full-gene alignments.
 
 Outputs
 -------
@@ -25,21 +31,32 @@ def parse_paf(paf_path):
             if line.startswith("#") or not line.strip():
                 continue
             f = line.rstrip().split("\t")
+            target_len   = int(f[6])
+            target_start = int(f[7])
+            target_end   = int(f[8])
+            query_start  = int(f[2])
+            query_end    = int(f[3])
             yield {
-                "query": f[0],
-                "query_len": int(f[1]),
-                "target": f[5],
-                "target_len": int(f[6]),
-                "n_matches": int(f[9]),
-                "aln_block": int(f[10]),
-                "mapq": int(f[11]),
-                "locus": Path(paf_path).stem.replace("_detailed", ""),
+                "query":        f[0],
+                "query_len":    int(f[1]),
+                "query_start":  query_start,
+                "query_end":    query_end,
+                "target":       f[5],
+                "target_len":   target_len,
+                "target_start": target_start,
+                "target_end":   target_end,
+                "n_matches":    int(f[9]),
+                "aln_block":    int(f[10]),
+                "mapq":         int(f[11]),
+                "locus":        Path(paf_path).stem.replace("_detailed", ""),
             }
 
 
 def is_exact(rec):
-    tlen = rec["target_len"]
-    return rec["aln_block"] == tlen and rec["n_matches"] == tlen
+    tlen        = rec["target_len"]
+    target_span = rec["target_end"]  - rec["target_start"]
+    query_span  = rec["query_end"]   - rec["query_start"]
+    return target_span == tlen and query_span == tlen and rec["n_matches"] == tlen
 
 
 def read_vgene_lengths(fasta_paths):

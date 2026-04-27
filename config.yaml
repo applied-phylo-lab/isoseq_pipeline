@@ -36,11 +36,24 @@ use_cluster2: true           # use cluster2 (recommended) vs legacy cluster
 include_singletons: true     # keep singletons from cluster2
 
 # ─── Alignment / filtering parameters ────────────────────────────────────────
-min_alignment_identity: 0.85  # minimum identity to keep a transcript as IG
-min_alignment_coverage: 0.50  # minimum fraction of V gene covered
+# Identity: immunotools (the reference tool for this data type) uses NO identity
+# threshold at all — it filters only on alignment length and uncovered ends.
+# Bird V genes undergoing gene conversion can match any single germline reference
+# at as low as 70-75% identity, so 0.85 is far too strict.  0.70 is a reasonable
+# lower bound that still excludes clearly non-IG alignments.
+min_alignment_identity: 0.70
+
+# Coverage: expressed as minimum number of V gene base-pairs that must be
+# covered (not a fraction).  Immunotools requires min_v_segment_length = 250 bp.
+# Using an absolute bp threshold avoids penalising transcripts that align well
+# to a gene that happens to be long.  Set to 0 to disable (use identity only).
+min_alignment_coverage_bp: 150
 
 # ─── Top-N alignment analysis (gene conversion evaluation) ────────────────────
 top_n_alignments: 5
+
+# ─── Immunotools (diversity_analyzer) ────────────────────────────────────────
+immunotools_path: "/home/kav67/immunotools/diversity_analyzer.py"
 
 # ─── Minimap2 preset ──────────────────────────────────────────────────────────
 # splice:hq : high-quality cDNA / IsoSeq reads — correct for this pipeline.
