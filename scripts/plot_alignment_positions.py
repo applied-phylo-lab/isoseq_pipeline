@@ -108,37 +108,56 @@ def parse_paf(paf_path):
 # ─── Collect pileups across all PAF files ─────────────────────────────────────
 
 def build_pileups(paf_paths):
-    """Return dict: gene → {'len': int, 'match': array, 'mismatch': array, 'covered': array, 'n_transcripts': int}."""
-    gene_len = {}
-    gene_match        = {}
-    gene_mismatch     = {}
-    gene_covered      = {}
-    gene_transcripts  = defaultdict(set)   # unique transcript IDs per gene
+    """Return dict: gene → {'len': int, 'match': array, 'mismatch': array, 'covered': array, 'n_transcripts': int}.
 
+    Only the best-identity alignment per transcript is used — matching how the
+    combined summary plot assigns each transcript to exactly one gene.
+    """
+    # Pass 1: for each transcript, find its best-identity gene and record
+    best = {}  # transcript → {'gene', 'identity', 'rec'}
+    all_recs = []
     for paf_path in paf_paths:
         for rec in parse_paf(paf_path):
-            gene = rec['target']
-            tlen = rec['target_len']
+            all_recs.append(rec)
+            tid = rec['query']
+            aln_block = rec['aln_block']
+            identity = rec['n_matches'] / aln_block if aln_block > 0 else 0.0
+            rec['_identity'] = identity
+            if tid not in best or identity > best[tid]['identity']:
+                best[tid] = {'gene': rec['target'], 'identity': identity}
 
-            if gene not in gene_len:
-                gene_len[gene]      = tlen
-                gene_match[gene]    = np.zeros(tlen, dtype=np.int32)
-                gene_mismatch[gene] = np.zeros(tlen, dtype=np.int32)
-                gene_covered[gene]  = np.zeros(tlen, dtype=np.int32)
+    # Pass 2: accumulate pileup arrays only for each transcript's best-hit gene
+    gene_len      = {}
+    gene_match    = {}
+    gene_mismatch = {}
+    gene_covered  = {}
+    gene_transcripts = defaultdict(set)
 
-            gene_transcripts[gene].add(rec['query'])
+    for rec in all_recs:
+        tid  = rec['query']
+        gene = rec['target']
+        if best[tid]['gene'] != gene:
+            continue  # skip secondary hits
 
-            if rec['cs'] is None:
-                # fallback: mark whole target span as covered (no match/mismatch detail)
-                s, e = rec['target_start'], min(rec['target_end'], tlen)
-                gene_covered[gene][s:e] += 1
-                continue
+        tlen = rec['target_len']
+        if gene not in gene_len:
+            gene_len[gene]      = tlen
+            gene_match[gene]    = np.zeros(tlen, dtype=np.int32)
+            gene_mismatch[gene] = np.zeros(tlen, dtype=np.int32)
+            gene_covered[gene]  = np.zeros(tlen, dtype=np.int32)
 
-            cs_ops = parse_cs(rec['cs'])
-            accumulate_positions(
-                rec['target_start'], tlen, cs_ops,
-                gene_match[gene], gene_mismatch[gene], gene_covered[gene]
-            )
+        gene_transcripts[gene].add(tid)
+
+        if rec['cs'] is None:
+            s, e = rec['target_start'], min(rec['target_end'], tlen)
+            gene_covered[gene][s:e] += 1
+            continue
+
+        cs_ops = parse_cs(rec['cs'])
+        accumulate_positions(
+            rec['target_start'], tlen, cs_ops,
+            gene_match[gene], gene_mismatch[gene], gene_covered[gene]
+        )
 
     result = {}
     for gene in gene_len:
