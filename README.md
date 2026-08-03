@@ -43,6 +43,8 @@ snakemake --cores 16           # run
 | `results_dir` | Root output directory for all results and logs |
 | `samples` | List of sample IDs |
 | `input_mode` | `"raw_bam"` or `"preprocessed_fastq"` (see below) |
+| `kinnex` | `true` for Kinnex / MAS-Seq libraries — inserts a `skera split` step before lima to break each concatenated HiFi read into its cDNA segments. Default `false` (plain Iso-Seq) |
+| `mas_adapters_fasta` | MAS array adapter FASTA for `skera split`, required when `kinnex: true` (e.g. `data/mas8_primers.fasta`) |
 | `hifi_bam` | Path pattern for raw HiFi BAM files (`{sample}` placeholder) |
 | `primers_fasta` | Primers FASTA used by lima and isoseq refine |
 | `preprocessed_fastq` | Path pattern for pre-processed FASTQ files (`{sample}` placeholder) |
@@ -53,6 +55,9 @@ snakemake --cores 16           # run
 | `min_alignment_identity` | Minimum identity (0–1) to call a transcript IG-related |
 | `min_alignment_coverage` | Minimum fraction of the V gene that must be covered |
 | `top_n_alignments` | Number of secondary alignments to retain per transcript |
+| `run_immunotools` | Run immunotools `diversity_analyzer` alongside the minimap2 filter (default `true`). Set `false` for species with no immunotools germline database — the merge step then falls back to the minimap2 filter alone |
+| `immunotools_org` | Organism name passed to `diversity_analyzer --org` (default `tufted_duck`). Build a new one with `scripts/make_immunotools_org.sh` |
+| `immunotools_path` | Path to `diversity_analyzer.py` |
 | `minimap2_preset` | minimap2 preset: `splice:hq` (IsoSeq/cDNA, default) or `map-ont` (ONT) — do **not** use `map-hifi`, it is designed for genomic mapping and its k=19 / min-score=80 settings will produce no alignments against short V gene references |
 
 ---

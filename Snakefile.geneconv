@@ -1,0 +1,221 @@
+"""
+Gene conversion analysis — stage 2.
+
+Runs on the output of the main Snakefile.  Two independent methods are applied
+to the same transcripts and then judged by the same biological negative
+control:
+
+  * BrepConvert (Mallaby et al. 2023), the published tool
+  * a topology-aware tract detector that scores each tract against an explicit
+    somatic-hypermutation null
+
+The control comes from the locus itself.  Under cis-acting deletional
+recombination the V genes between the rearranged V and J are excised, so a
+"donor" from that interval is impossible.  Comparing how often each method
+picks an impossible donor against what random donor choice would give measures
+each method's false-positive rate directly, with no simulation.
+
+  snakemake -s Snakefile.geneconv --configfile config_geneconv_<sample>.yaml --cores 16
+"""
+from pathlib import Path
+
+configfile: "config_geneconv.yaml"
+
+RESULTS   = config["results_dir"]
+SAMPLE    = config["sample"]
+OUT       = f"{RESULTS}/geneconv"
+ALIGN     = f"{RESULTS}/{SAMPLE}/alignment"
+LOCI      = list(config["loci"].keys())
+
+RSCRIPT   = config.get("rscript", "Rscript")
+PYTHON    = config.get("python", "python")
+
+
+def locus_cfg(wildcards, key):
+    return config["loci"][wildcards.locus][key]
+
+
+rule all:
+    input:
+        f"{OUT}/functional_genes.tsv",
+        expand(f"{OUT}/{{locus}}_donor_pool.tsv", locus=LOCI),
+        expand(f"{OUT}/{{locus}}_tracts.tsv", locus=LOCI),
+        expand(f"{OUT}/{{locus}}_topology_test.tsv", locus=LOCI),
+        expand(f"{OUT}/{{locus}}_locus_architecture.tsv", locus=LOCI),
+        expand(f"{OUT}/{{locus}}_method_comparison.tsv", locus=LOCI),
+
+
+# ─── Which V genes are actually used, from expression not annotation ──────────
+
+rule call_functional_genes:
+    input:
+        script="scripts/gc_call_functional_genes.py",
+        pafs=expand(f"{ALIGN}/{{locus}}_detailed.paf", locus=LOCI),
+        vgenes=[config["loci"][l]["vgene_fasta"] for l in LOCI],
+    output:
+        genes=f"{OUT}/functional_genes.tsv",
+        assignments=f"{OUT}/transcript_assignments.tsv",
+    params:
+        margin=config.get("junction_margin", 20),
+        min_identity=config.get("functional_min_identity", 0.98),
+        min_covered=config.get("functional_min_covered_bp", 200),
+        min_tx=config.get("functional_min_transcripts", 2),
+    log:
+        f"{RESULTS}/logs/geneconv/functional_genes.log",
+    shell:
+        "PYTHONPATH=scripts {PYTHON} {input.script} "
+        "--pafs {input.pafs} --vgene-fastas {input.vgenes} "
+        "--junction-margin {params.margin} "
+        "--min-identity {params.min_identity} "
+        "--min-covered-bp {params.min_covered} "
+        "--min-transcripts {params.min_tx} "
+        "--out-genes {output.genes} --out-assignments {output.assignments} 2>{log}"
+
+
+# ─── Which donors survived V(D)J recombination ───────────────────────────────
+
+rule donor_pool:
+    input:
+        script="scripts/gc_donor_pool.py",
+        vgenes=lambda wc: locus_cfg(wc, "vgene_fasta"),
+    output:
+        pool=f"{OUT}/{{locus}}_donor_pool.tsv",
+        summary=f"{OUT}/{{locus}}_donor_summary.tsv",
+    params:
+        j_pos=lambda wc: locus_cfg(wc, "j_pos"),
+        j_strand=lambda wc: locus_cfg(wc, "j_strand"),
+    log:
+        f"{RESULTS}/logs/geneconv/{{locus}}_donor_pool.log",
+    shell:
+        "PYTHONPATH=scripts {PYTHON} {input.script} "
+        "--vgene-fasta {input.vgenes} --locus {wildcards.locus} "
+        "--j-pos {params.j_pos} --j-strand '{params.j_strand}' "
+        "--out {output.pool} --out-summary {output.summary} 2>{log}"
+
+
+# ─── Does the locus look the way cis deletional conversion predicts? ──────────
+
+rule locus_architecture:
+    input:
+        script="scripts/gc_locus_architecture.py",
+        genes=f"{OUT}/functional_genes.tsv",
+        pool=f"{OUT}/{{locus}}_donor_pool.tsv",
+        assignments=f"{OUT}/transcript_assignments.tsv",
+    output:
+        f"{OUT}/{{locus}}_locus_architecture.tsv",
+    log:
+        f"{RESULTS}/logs/geneconv/{{locus}}_architecture.log",
+    shell:
+        "PYTHONPATH=scripts {PYTHON} {input.script} "
+        "--functional-genes {input.genes} --donor-pool {input.pool} "
+        "--assignments {input.assignments} --locus {wildcards.locus} "
+        "--out {output} 2>{log}"
+
+
+# ─── Tract detection with an explicit SHM null ───────────────────────────────
+
+rule detect_tracts:
+    input:
+        script="scripts/gc_detect_tracts.py",
+        paf=f"{ALIGN}/{{locus}}_detailed.paf",
+        vgenes=lambda wc: locus_cfg(wc, "vgene_fasta"),
+        assignments=f"{OUT}/transcript_assignments.tsv",
+        pool=f"{OUT}/{{locus}}_donor_pool.tsv",
+    output:
+        tracts=f"{OUT}/{{locus}}_tracts.tsv",
+        summary=f"{OUT}/{{locus}}_tract_summary.tsv",
+    params:
+        min_informative=config.get("min_informative", 3),
+        p_threshold=config.get("tract_p_threshold", 0.05),
+    log:
+        f"{RESULTS}/logs/geneconv/{{locus}}_tracts.log",
+    shell:
+        "PYTHONPATH=scripts {PYTHON} {input.script} "
+        "--paf {input.paf} --vgene-fasta {input.vgenes} "
+        "--assignments {input.assignments} --donor-pool {input.pool} "
+        "--locus {wildcards.locus} "
+        "--min-informative {params.min_informative} "
+        "--p-threshold {params.p_threshold} "
+        "--out-tracts {output.tracts} --out-summary {output.summary} 2>{log}"
+
+
+rule topology_test:
+    input:
+        script="scripts/gc_topology_test.py",
+        tracts=f"{OUT}/{{locus}}_tracts.tsv",
+        pool=f"{OUT}/{{locus}}_donor_pool.tsv",
+    output:
+        f"{OUT}/{{locus}}_topology_test.tsv",
+    log:
+        f"{RESULTS}/logs/geneconv/{{locus}}_topology_test.log",
+    shell:
+        "PYTHONPATH=scripts {PYTHON} {input.script} "
+        "--tracts {input.tracts} --donor-pool {input.pool} "
+        "--locus {wildcards.locus} --out {output} 2>{log}"
+
+
+# ─── BrepConvert ─────────────────────────────────────────────────────────────
+# Needs IMGT-shaped gene names and a Biostrings>=2.77 patch; see
+# gc_prepare_brepconvert.py and README for what had to change.
+
+rule prepare_brepconvert:
+    input:
+        script="scripts/gc_prepare_brepconvert.py",
+        vgenes=lambda wc: locus_cfg(wc, "vgene_fasta"),
+        genes=f"{OUT}/functional_genes.tsv",
+        assignments=f"{OUT}/transcript_assignments.tsv",
+        transcripts=f"{ALIGN}/combined_ig_transcripts.fasta",
+    output:
+        functional=f"{OUT}/bc_{{locus}}_functional.fasta",
+        pseudogene=f"{OUT}/bc_{{locus}}_pseudogene.fasta",
+        transcripts=f"{OUT}/bc_{{locus}}_transcripts.fasta",
+        gene_map=f"{OUT}/bc_{{locus}}_gene_map.tsv",
+        tx_map=f"{OUT}/bc_{{locus}}_transcript_map.tsv",
+    log:
+        f"{RESULTS}/logs/geneconv/{{locus}}_prepare_brepconvert.log",
+    shell:
+        "PYTHONPATH=scripts {PYTHON} {input.script} "
+        "--vgene-fasta {input.vgenes} --functional-genes {input.genes} "
+        "--assignments {input.assignments} --transcripts {input.transcripts} "
+        "--locus {wildcards.locus} "
+        "--out-functional {output.functional} --out-pseudogene {output.pseudogene} "
+        "--out-transcripts {output.transcripts} --out-gene-map {output.gene_map} "
+        "--out-transcript-map {output.tx_map} 2>{log}"
+
+
+rule run_brepconvert:
+    input:
+        script="scripts/run_brepconvert.R",
+        functional=f"{OUT}/bc_{{locus}}_functional.fasta",
+        pseudogene=f"{OUT}/bc_{{locus}}_pseudogene.fasta",
+        transcripts=f"{OUT}/bc_{{locus}}_transcripts.fasta",
+    output:
+        f"{OUT}/{{locus}}_brepconvert.csv",
+    log:
+        f"{RESULTS}/logs/geneconv/{{locus}}_brepconvert.log",
+    shell:
+        "{RSCRIPT} {input.script} {input.functional} {input.pseudogene} "
+        "{input.transcripts} {output} 2>{log}"
+
+
+rule compare_methods:
+    input:
+        script="scripts/gc_compare_methods.py",
+        bc=f"{OUT}/{{locus}}_brepconvert.csv",
+        gene_map=f"{OUT}/bc_{{locus}}_gene_map.tsv",
+        tx_map=f"{OUT}/bc_{{locus}}_transcript_map.tsv",
+        assignments=f"{OUT}/transcript_assignments.tsv",
+        pool=f"{OUT}/{{locus}}_donor_pool.tsv",
+        tracts=f"{OUT}/{{locus}}_tracts.tsv",
+    output:
+        events=f"{OUT}/{{locus}}_brepconvert_events.tsv",
+        summary=f"{OUT}/{{locus}}_method_comparison.tsv",
+    log:
+        f"{RESULTS}/logs/geneconv/{{locus}}_comparison.log",
+    shell:
+        "PYTHONPATH=scripts {PYTHON} {input.script} "
+        "--brepconvert-csv {input.bc} --gene-map {input.gene_map} "
+        "--transcript-map {input.tx_map} --assignments {input.assignments} "
+        "--donor-pool {input.pool} --tracts {input.tracts} "
+        "--locus {wildcards.locus} "
+        "--out-events {output.events} --out-summary {output.summary} 2>{log}"

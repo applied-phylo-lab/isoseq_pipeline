@@ -1,0 +1,90 @@
+# Red-winged blackbird (Agelaius phoeniceus) Kinnex IsoSeq run
+# ─────────────────────────────────────────────────────────────────────────────
+# Sample : Lovette-BB-20994, Revio run r84094_20260720_203710, well 1_B01,
+#          Kinnex sample barcode bcM0001 (already demultiplexed on-instrument).
+#
+# NOTE on the germline database: no germline V genes exist yet for *this*
+# individual.  We are standing in the bAgePho2_pri VGP assembly annotation
+# (same species, different bird), so exact-match rates are an underestimate and
+# apparent gene-conversion signal will be inflated by true allelic differences
+# between the two individuals.  Re-run against the matched germline when it is
+# available.
+# ─────────────────────────────────────────────────────────────────────────────
+
+results_dir: "/local/storage/kav67/redwinged_blackbird_isoseq/results"
+
+samples:
+  - VGP_redwinged_blackbird_bcM0001
+
+# ─── Input mode ───────────────────────────────────────────────────────────────
+input_mode: "raw_bam"
+
+# Kinnex / MAS-Seq library: each HiFi read is a concatemer of ~8 cDNA molecules
+# and must be split with `skera split` before lima.  Verified against the data:
+# 95.8 % full arrays, mean concatenation factor 7.89.
+kinnex: true
+mas_adapters_fasta: "data/mas8_primers.fasta"
+
+# ─── Input paths (raw_bam mode) ───────────────────────────────────────────────
+hifi_bam: "/home/kav67/KAT_DATA/r84094_20260720_203710_Lovette-BB-20994/1_B01/hifi_reads/m84094_260720_230105_s3.hifi_reads.bcM0001.bam"
+primers_fasta: "data/primers.fasta"
+
+# ─── V gene FASTA databases — one file per locus ──────────────────────────────
+# Built from combined_genes_<LOCUS>_clean.txt with scripts/make_vgene_fasta.py:
+#   IGH  133 V genes (136 rows, 3 exact duplicate sequences collapsed)
+#   IGL   23 V genes
+vgene_loci:
+  IGH: "data/vgenes/VGP_redwinged_blackbird_IGH.fasta"
+  IGL: "data/vgenes/VGP_redwinged_blackbird_IGL.fasta"
+
+# ─── IsoSeq parameters (raw_bam mode only) ────────────────────────────────────
+require_polya: true
+use_cluster2: true
+include_singletons: true
+
+# isoseq cluster2 segfaulted in its Consensus stage on the full 91,291,873-read
+# FLNC set (4h34m in, isoseq 4.3.0 — already the newest release; not memory,
+# peak RSS was 30 GB of 2.2 TB).  Screening FLNC reads against the V genes first
+# and clustering only the IG hits avoids it and takes ~10 min.  Measured on a
+# 153,781-read pilot: 9 IG reads, so expect ~5,000 genome-wide.
+prefilter_ig_before_cluster: true
+
+# ─── Alignment / filtering parameters ────────────────────────────────────────
+min_alignment_identity: 0.70
+min_alignment_coverage_bp: 150
+
+# ─── Top-N alignment analysis (gene conversion evaluation) ────────────────────
+top_n_alignments: 5
+
+# ─── Immunotools (diversity_analyzer) ────────────────────────────────────────
+# Organism database built at immunotools/data/{germline,annotation}/:
+#   germline/VGP_redwinged_blackbird/IG/
+#     IGHV.fa  133 blackbird V genes      IGLV.fa   23 blackbird V genes
+#     IGHJ.fa  Gallus IMGT IGHJ*01        IGLJ.fa   blackbird IGLJ*01
+#     IGKV.fa / IGKJ.fa empty (no IGK in this assembly)
+#   annotation/VGP_redwinged_blackbird_v_imgt.txt  109 V genes (88 VH + 21 VL)
+#   annotation/VGP_redwinged_blackbird_j_imgt.txt  2 J genes (HJ + LJ)
+#
+# Rebuild with scripts/make_immunotools_org.sh (V CDR boundaries come from
+# igblastn via py/cdr_labeling_utils/generate_v_cdr_labeling_by_igblast.py,
+# J CDR3 anchors from create_j_gene_cdr3_labeling.py).
+#
+# IGLJ is the real germline J, recovered from the assembly at
+# CM036732.1:8,746,604 (minus strand) — RSS heptamer CACTGTG immediately 5',
+# splice donor GTGAGT immediately 3'.  It sits 374 bp outside the extracted
+# IGL locus window, which is why it is absent from the locus_data FASTA.
+# Kept in data/jgenes/VGP_redwinged_blackbird_IGLJ.fasta.
+#
+# IGHJ is still the Gallus stand-in (as tufted_duck does): no IGHJ is annotated
+# for this species and it is not in the IGH contig.  It works — the Gallus IGHJ
+# aligns well enough for vj_finder — but replace it when a real one exists.
+#
+# Measured on pilot reads (9 minimap2-called IG transcripts): IGH 1/1 recovered,
+# IGL 7/8.  Before the IGLJ fix, IGL recall was 0/8 — transcripts aligned only
+# 28 bp to the Gallus IGLJ and were dropped by min_j_segment_length = 30.
+run_immunotools: true
+immunotools_org: "VGP_redwinged_blackbird"
+immunotools_path: "/home/kav67/immunotools/diversity_analyzer.py"
+
+# ─── Minimap2 preset ──────────────────────────────────────────────────────────
+minimap2_preset: "splice:hq"

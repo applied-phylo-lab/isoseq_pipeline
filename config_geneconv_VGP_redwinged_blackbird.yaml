@@ -1,0 +1,70 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Gene conversion analysis (stage 2) — red-winged blackbird
+#
+#   snakemake -s Snakefile.geneconv \
+#     --configfile config_geneconv_VGP_redwinged_blackbird.yaml --cores 16
+#
+# J coordinates below were determined from the data, not from the annotation:
+#   IGL  CM036732.1:8,746,604 (-)  found by searching the assembly for the J
+#        sequence shared by the IGL transcripts. It lies 374 bp outside the
+#        extracted locus_data window, which is why it is not in that FASTA.
+#   IGH  JAIWQD010000385.1:105,711 (+)  found by blastn of the post-V portion of
+#        IGH transcripts against the contig (94-98% identity, 8/8 transcripts).
+#
+# The D genes in IGHD.csv are NOT usable to orient the IGH locus: they sit at
+# 75,547-78,140, inside the V array (35,018-92,756) and far from the J at
+# 105,711, and the file labels every one "Location Relative to V-Cluster:
+# v_cluster". They are RSS-motif hits within the V cluster.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+results_dir: "/local/storage/kav67/redwinged_blackbird_isoseq/results"
+sample: "VGP_redwinged_blackbird_bcM0001"
+
+python: "/home/kav67/miniconda3/envs/snakemake/bin/python"
+rscript: "/home/kav67/miniconda3/envs/R_env/bin/Rscript"
+
+loci:
+  IGH:
+    vgene_fasta: "data/vgenes/VGP_redwinged_blackbird_IGH.fasta"
+    j_pos: 105711
+    j_strand: "+"
+    # D genes found empirically by blasting the CDR3 region of the IGH
+    # transcripts against the V->J gap (92,756-105,711). They are NOT the
+    # entries in IGHD.csv, which all sit inside the V cluster at 75.5-78.1 kb
+    # and are labelled "v_cluster" -- those are RSS-motif hits, not D genes.
+    # The two real D genes lie on OPPOSITE strands and are used by different
+    # transcripts (60 use the minus one, 20 the plus one).
+    d_genes:
+      - pos: 97324
+        strand: "-"
+        transcripts: 60
+      - pos: 97566
+        strand: "+"
+        transcripts: 20
+    # Donor pool boundary: the V-proximal D, not J. Makes no difference to the
+    # gene set here because no V gene lies between 92,756 and 105,711, but it
+    # is the mechanistically correct boundary.
+    d_anchor_pos: 97324
+  IGL:
+    vgene_fasta: "data/vgenes/VGP_redwinged_blackbird_IGL.fasta"
+    j_pos: 8746604
+    j_strand: "-"
+    # No D genes in IGL: V joins J directly, so the V-vs-J comparison is the
+    # correct one for the recombination mechanism, not a proxy.
+    d_genes: []
+
+# ─── Calling which V genes are really used ────────────────────────────────────
+# Identity is scored over the V gene EXCLUDING its 3' end, where V(D)J junction
+# formation destroys germline identity no matter how functional the gene is.
+junction_margin: 20
+functional_min_identity: 0.98
+functional_min_covered_bp: 200
+functional_min_transcripts: 2
+
+# ─── Tract detection ──────────────────────────────────────────────────────────
+# min_informative is deliberately permissive: everything is reported and the
+# filtering happens on the corrected p-value, so the effect of stringency stays
+# visible in the topology sweep. For contrast, BrepConvert's equivalent bar is
+# a >=3 bp stretch of clustered mismatches, i.e. as few as 2 differences.
+min_informative: 3
+tract_p_threshold: 0.05
