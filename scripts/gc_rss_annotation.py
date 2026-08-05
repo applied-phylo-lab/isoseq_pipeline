@@ -94,9 +94,11 @@ def main():
 
     counts = Counter()
     with open(args.out, "w") as out:
+        # rss_valid mirrors rss_state; kept as its own column for callers that
+        # want a plain boolean rather than the three-state string.
         out.write("gene\tlocus\tpos\tstrand\tannotated_productive\theptamer\tnonamer"
                   "\tspacer_bp\theptamer_mismatch\tnonamer_mismatch\trss_state"
-                  "\trss_valid\n"  # rss_valid mirrors rss_state, kept for callers)
+                  "\trss_valid\n")
         for key, name in sorted(by_key.items(), key=lambda kv: (kv[0][0], kv[0][1])):
             g = info[name]
             r = rss_by_key.get(key)

@@ -31,6 +31,8 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.colors as mcolors
 import numpy as np
+from gc_palette import save_figure
+
 import pandas as pd
 
 
@@ -172,7 +174,7 @@ def plot_pooled_summary(exact_summary_all, top_all, output_path):
 
     fig.suptitle("IsoSeq IG Transcript V Gene Alignment Summary — All Samples Pooled",
                  fontsize=13, fontweight="bold")
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    save_figure(fig, output_path, dpi=150)
     print(f"Saved {output_path}", file=sys.stderr)
 
 
@@ -387,7 +389,7 @@ def plot_identity_analysis(aln, identity_df, out_path, top_n=25):
                                   if r["n_full_exact_match"] > 0 else ""),
     )
 
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    save_figure(plt.gcf(), out_path, dpi=150)
     print(f"Saved {out_path}", file=sys.stderr)
 
 
@@ -584,7 +586,7 @@ def main():
         ax5.axis("off")
 
     fig.suptitle("Cross-sample IG transcript summary", fontsize=14, fontweight="bold", y=1.01)
-    fig.savefig(args.output, dpi=150, bbox_inches="tight")
+    save_figure(fig, args.output, dpi=150)
     print(f"Saved {args.output}", file=sys.stderr)
 
     # ── Pooled per-sample-style summary ───────────────────────────────────────

@@ -68,3 +68,10 @@ functional_min_transcripts: 2
 # a >=3 bp stretch of clustered mismatches, i.e. as few as 2 differences.
 min_informative: 3
 tract_p_threshold: 0.05
+
+# ─── RSS ──────────────────────────────────────────────────────────────────────
+# Which V genes carry a recombination signal sequence, and so can be the parent
+# of a rearrangement at all. Taken as given from the curated screen rather than
+# re-called here. bAgePho0_pri is the VGP assembly this run is built on.
+gene_list_csv: "/local/storage/kav67/clean_birds/gene_list.csv"
+source_pattern: "RedWinged_Blackbird/bAgePho0_pri"

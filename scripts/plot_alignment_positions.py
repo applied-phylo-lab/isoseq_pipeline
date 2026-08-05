@@ -26,7 +26,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.backends.backend_pdf import PdfPages
+from gc_palette import MultiPageFigures as PdfPages
 import numpy as np
 
 

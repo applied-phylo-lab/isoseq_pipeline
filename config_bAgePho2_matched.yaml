@@ -1,0 +1,87 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Red-winged blackbird Kinnex IsoSeq run — MATCHED germline
+#
+#   Reads  : same as the first run (r84094_20260720_203710, 1_B01, bcM0001)
+#   Germline: bAgePho2_pri, i.e. the annotation of the SAME individual that was
+#             sequenced.  The first run used bAgePho0_pri (the VGP assembly of a
+#             DIFFERENT bird); those results live in
+#             /local/storage/kav67/redwinged_blackbird_isoseq/results
+#
+# Gene counts: IGH 162 V genes (bAgePho0 had 144), IGL 23 (unchanged).
+#
+# Haplotypes: the bird is diploid and bAgePho2_alt is also annotated, but only
+# for IGL — the alt haplotype has no IGH annotation.  This run uses the PRIMARY
+# haplotype for both loci so the coordinates stay internally consistent, which
+# the donor-pool and topology model depend on.  Mixing haplotypes into one
+# "locus" would put allelic copies of the same gene in the same reference and
+# make gene usage counts ambiguous.  The alt IGL set is built and available at
+# data/vgenes/bAgePho2_alt_IGL.fasta for the haplotype comparison, which is a
+# separate analysis.
+#
+# Preprocessing reuse: skera / lima / isoseq refine do not depend on the
+# germline, so segmented.bam, fl.bam and flnc.bam are symlinked from the first
+# run rather than recomputed (~2 h saved).  Everything from the IG prescreen
+# onward DOES depend on the germline and is recomputed here.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+results_dir: "/local/storage/kav67/redwinged_blackbird_isoseq_matched/results"
+
+samples:
+  - bAgePho2_bcM0001
+
+# ─── Input mode ───────────────────────────────────────────────────────────────
+input_mode: "raw_bam"
+kinnex: true
+mas_adapters_fasta: "data/mas8_primers.fasta"
+
+hifi_bam: "/home/kav67/KAT_DATA/r84094_20260720_203710_Lovette-BB-20994/1_B01/hifi_reads/m84094_260720_230105_s3.hifi_reads.bcM0001.bam"
+primers_fasta: "data/primers.fasta"
+
+# ─── V gene FASTA databases — matched individual ─────────────────────────────
+vgene_loci:
+  IGH: "data/vgenes/bAgePho2_pri_IGH.fasta"
+  IGL: "data/vgenes/bAgePho2_pri_IGL.fasta"
+
+# ─── IsoSeq parameters ────────────────────────────────────────────────────────
+require_polya: true
+use_cluster2: true
+include_singletons: true
+
+# cluster2 segfaults on the full 91.3M-read FLNC set, so the IG prescreen runs
+# first and only the IG hits are clustered.  See the first run's config for the
+# full diagnosis.
+prefilter_ig_before_cluster: true
+
+# ─── Alignment / filtering parameters ────────────────────────────────────────
+min_alignment_identity: 0.70
+min_alignment_coverage_bp: 150
+
+# ─── Top-N alignment analysis ─────────────────────────────────────────────────
+top_n_alignments: 5
+
+# ─── Immunotools ──────────────────────────────────────────────────────────────
+# Organism database built for THIS individual:
+#   IGHV.fa  162 bAgePho2_pri V genes      IGLV.fa   23 bAgePho2_pri V genes
+#   IGLJ.fa  bAgePho2 IGLJ, located at ptg000008l:6,339,420 (+) by searching the
+#            assembly for the J sequence carried by the transcripts.  It is
+#            base-for-base identical to the bAgePho0 IGLJ, so the J is conserved
+#            between the two birds.
+#   IGHJ.fa  blackbird IGHJ derived from the bAgePho0 assembly.  The IGH J could
+#            NOT be located in bAgePho2: all 162 IGH V genes sit on ptg000161l
+#            and no J-like sequence with a proper splice donor is present there.
+#            Candidate hits on ptg000006l carry no IGH V genes and look like an
+#            unrelated repeat family, so they were not used.  This is a
+#            same-species stand-in, not a same-individual one -- a big
+#            improvement on the previous Gallus J, but flag it in any IGH result.
+#   IGKV/IGKJ empty (no IGK in this assembly)
+#
+# Rebuild with:
+#   scripts/make_immunotools_org.sh bAgePho2 \
+#     data/vgenes/bAgePho2_pri_IGH.fasta data/vgenes/bAgePho2_pri_IGL.fasta \
+#     data/jgenes/blackbird_IGHJ.fasta data/jgenes/bAgePho2_IGLJ.fasta
+run_immunotools: true
+immunotools_org: "bAgePho2"
+immunotools_path: "/home/kav67/immunotools/diversity_analyzer.py"
+
+# ─── Minimap2 preset ──────────────────────────────────────────────────────────
+minimap2_preset: "splice:hq"

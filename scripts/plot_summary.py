@@ -14,6 +14,8 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import pandas as pd
 import numpy as np
+from gc_palette import save_figure
+
 
 
 def main():
@@ -105,7 +107,7 @@ def main():
     ax5.legend()
 
     fig.suptitle("IsoSeq IG Transcript V Gene Alignment Summary", fontsize=14, fontweight="bold")
-    fig.savefig(args.output, dpi=150, bbox_inches="tight")
+    save_figure(fig, args.output, dpi=150)
     print(f"Saved {args.output}", file=sys.stderr)
 
 

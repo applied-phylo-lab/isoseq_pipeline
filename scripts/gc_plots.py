@@ -22,19 +22,26 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
-from matplotlib.patches import FancyArrowPatch, Patch, Rectangle
+from matplotlib.patches import ConnectionStyle, FancyArrowPatch, Patch, Rectangle
 
-ALLOWED_C = "#2a7f62"     # topologically possible
-IMPOSSIBLE_C = "#c0392b"  # donor was deleted by the rearrangement
-FUNC_C = "#1f4e79"
-PSEUDO_C = "#999999"
+from gc_palette import save_figure, YES, NO, GREY, GREY_DARK, INK, SEGMENT, locus_ramp, HEATMAP
 
-# Gene colours encode RSS state. Deliberately blue/amber/grey so they never
-# read as the green/red used for arrow topology.
+ALLOWED_C = YES           # topologically possible
+IMPOSSIBLE_C = NO         # donor was deleted by the rearrangement
+FUNC_C = INK
+PSEUDO_C = GREY
+
+# Gene colours encode RSS state, in the V-segment navy so they never compete
+# with the teal/rose used for arrow topology.
 RSS_COLORS = {
-    "rss_present": "#0b5394",  # RSS recorded: can be rearranged
-    "rss_absent": "#c4c4c4",   # none recorded: donor-only pseudogene
+    "rss_present": SEGMENT["V"],  # RSS recorded: can be rearranged
+    "rss_absent": GREY,           # none recorded: donor-only pseudogene
 }
+
+
+def locus_ramp_from(colour):
+    from gc_palette import ramp
+    return ramp(colour)
 
 
 def read_tsv(path):
@@ -114,18 +121,16 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
     # J marker at whichever end it sits
     j_left = j_pos < min(positions)
     jx = -1.4 if j_left else len(order) + 0.4
-    ax.plot([jx], [0], marker="D", ms=12, color="#e67e22", zorder=6)
+    ax.plot([jx], [0], marker="D", ms=12, color=SEGMENT["J"], zorder=6)
     ax.annotate(f"J\n{j_pos:,}", (jx, 0), textcoords="offset points",
-                xytext=(0, -34), ha="center", fontsize=10, color="#e67e22",
+                xytext=(0, -34), ha="center", fontsize=10, color=SEGMENT["J"],
                 fontweight="bold")
 
     maxc = max(pairs.values()) if pairs else 1
     top = {k for k, _ in pairs.most_common(label_top)}
 
     n_allowed = n_impossible = 0
-    # Arcs of similar span peak at similar heights, so their labels collide.
-    # Spread labels over three bands and nudge them along the arc.
-    label_slot = 0
+    labels = []
     for (d, p), c in sorted(pairs.items(), key=lambda kv: kv[1]):
         if c < min_count:
             continue
@@ -134,8 +139,6 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
         n_impossible += 0 if ok else c
         x0, x1 = xof[d], xof[p]
         sign = 1 if ok else -1
-        # arc height scales with genomic separation so long-range arcs clear
-        height = sign * (0.45 + 0.85 * abs(x1 - x0) / max(1, len(order) - 1))
         lw = 0.7 + 3.6 * (c / maxc)
         # arc3's curvature is relative to the direction of travel, so the sign
         # has to be flipped for right-to-left arcs or "possible" and
@@ -151,16 +154,7 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
         )
         ax.add_patch(arrow)
         if (d, p) in top:
-            band = (label_slot % 3) - 1          # -1, 0, +1
-            label_slot += 1
-            frac = 0.72 + 0.13 * band
-            lx = (x0 + x1) / 2 + band * 0.55 * (1 if x1 > x0 else -1)
-            ax.annotate(str(c), (lx, height * frac),
-                        ha="center", va="center", fontsize=8.5,
-                        color=ALLOWED_C if ok else IMPOSSIBLE_C,
-                        fontweight="bold",
-                        bbox=dict(boxstyle="round,pad=0.16", fc="white",
-                                  ec="none", alpha=0.82), zorder=6)
+            labels.append((x0, x1, rad, c, ALLOWED_C if ok else IMPOSSIBLE_C))
 
     # With ~130 genes every label cannot be legible; show every Nth and keep
     # minor ticks for the rest so positions stay readable.
@@ -176,6 +170,46 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
     ax.set_xlim(-2.4, len(order) + 1.4)
     lim = 1.55
     ax.set_ylim(-lim, lim)
+
+    # ── arc labels ────────────────────────────────────────────────────────────
+    # These have to come after the limits are fixed.  FancyArrowPatch builds its
+    # connection in DISPLAY space, not data space, so the apex of an arc depends
+    # on the axes aspect and cannot be predicted from the data coordinates alone.
+    # Ask matplotlib for the same Arc3 it drew, then pull the curve back into
+    # data coordinates: Arc3 yields a quadratic Bezier [P0, control, P2], which
+    # is exact to evaluate.  (The transform is dpi-invariant, so this survives
+    # savefig at any resolution.)
+    to_disp, to_data = ax.transData, ax.transData.inverted()
+    placed = []
+    # Try the apex first, then walk symmetrically outwards along the same curve.
+    # Sliding a number along its own arc keeps it unambiguously attached to that
+    # arc; lifting it off would put it in the empty band between arcs, which is
+    # what made the old labels look unmoored.
+    offsets = (0.5, 0.40, 0.60, 0.31, 0.69, 0.23, 0.77, 0.16, 0.84)
+    for x0, x1, rad, c, col in sorted(labels, key=lambda t: -t[3]):
+        bez = to_data.transform(
+            ConnectionStyle.Arc3(rad=rad)(
+                to_disp.transform((x0, 0.0)),
+                to_disp.transform((x1, 0.0)),
+            ).vertices
+        )
+        (bx0, by0), (cx, cy), (bx1, by1) = bez[0], bez[1], bez[2]
+        lx = ly = None
+        for t in offsets:
+            u = 1.0 - t
+            px_ = u * u * bx0 + 2 * u * t * cx + t * t * bx1
+            py_ = u * u * by0 + 2 * u * t * cy + t * t * by1
+            if lx is None:
+                lx, ly = px_, py_          # fall back to the apex
+            if all(abs(px_ - qx) > 0.9 or abs(py_ - qy) > 0.1
+                   for qx, qy in placed):
+                lx, ly = px_, py_
+                break
+        placed.append((lx, ly))
+        ax.annotate(str(c), (lx, ly), ha="center", va="center", fontsize=8.5,
+                    color=col, fontweight="bold",
+                    bbox=dict(boxstyle="round,pad=0.16", fc="white",
+                              ec="none", alpha=0.88), zorder=7)
 
     ax.text(0.5, 0.965,
             "donor → recipient, arc respects recombination topology",
@@ -246,7 +280,7 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
 
     ax.set_xlabel("V gene (contig position, ordered; J-proximal end nearest J marker)",
                   fontsize=10)
-    fig.savefig(out, bbox_inches="tight")
+    save_figure(fig, out)
     plt.close(fig)
     return tot, n_impossible
 
@@ -269,7 +303,8 @@ def report(tracts, pool, genes, arch, topo, locus, out):
             continue
         if t["parent"] in idx and t["donor"] in idx:
             M[idx[t["donor"]], idx[t["parent"]]] += 1
-    im = ax.imshow(M, cmap="viridis", origin="lower", aspect="auto")
+    # viridis reversed: yellow = low, dark purple = high
+    im = ax.imshow(M, cmap=HEATMAP, origin="lower", aspect="auto")
     # hatch the impossible half-plane
     for p in order:
         allowed = set() if pool[p]["allowed_donors"] == "NONE" else set(
@@ -283,8 +318,8 @@ def report(tracts, pool, genes, arch, topo, locus, out):
                                        edgecolor=IMPOSSIBLE_C, alpha=.45))
     ax.set_xlabel("recipient (parent)")
     ax.set_ylabel("donor")
-    ax.set_title("(a) significant tracts per donor–recipient pair\n"
-                 "red hatching = topologically impossible", fontsize=10)
+    ax.set_title("A  significant tracts per donor–recipient pair\n"
+                 "hatching = topologically impossible", fontsize=10)
     ax.set_xticks(range(0, n, max(1, n // 12)))
     ax.set_xticklabels([short(order[i]) for i in range(0, n, max(1, n // 12))],
                        rotation=90, fontsize=6)
@@ -313,7 +348,7 @@ def report(tracts, pool, genes, arch, topo, locus, out):
         ax.set_xlabel("allowed donors (higher = more J-proximal)")
         mf = np.mean(fx) if fx else float("nan")
         mp = np.mean(px) if px else float("nan")
-        ax.set_title("(b) functional genes sit where donors are plentiful\n"
+        ax.set_title("B  functional genes sit where donors are plentiful\n"
                      f"mean {mf:.1f} vs {mp:.1f}  (bars = group means)", fontsize=10)
         ax.grid(axis="x", alpha=.25)
 
@@ -358,7 +393,7 @@ def report(tracts, pool, genes, arch, topo, locus, out):
         # ambiguous donor set this is the strict reading; scoring an event as
         # correct when ANY listed donor is possible is more generous and can
         # give a very different answer, so the view is stated explicitly.
-        ax.set_title(f"(c) topology control, power-matched\n"
+        ax.set_title(f"C  topology control, power-matched\n"
                      f"n={m} donor-calls on {len(powered)} informative parents — "
                      f"{verdict} (p={pv:.2g})\n"
                      f"each listed donor counted separately (strict reading)",
@@ -366,7 +401,7 @@ def report(tracts, pool, genes, arch, topo, locus, out):
     else:
         ax.text(.5, .5, "no calls on informative parents",
                 ha="center", va="center", transform=ax.transAxes)
-        ax.set_title("(c) topology control, power-matched", fontsize=10)
+        ax.set_title("C  topology control, power-matched", fontsize=10)
 
     # (d) tract start positions along V
     ax = fig.add_subplot(gs[1, 0])
@@ -381,7 +416,7 @@ def report(tracts, pool, genes, arch, topo, locus, out):
         ax.set_xlabel("tract start (bp along V gene)")
         ax.set_ylabel("tracts")
         ax.legend(fontsize=8)
-        ax.set_title("(d) where tracts fall along V", fontsize=10)
+        ax.set_title("D  where tracts fall along V", fontsize=10)
 
     # (e) evidence strength -- n_support is NA for BrepConvert-derived tracts,
     # which report a span rather than a count of diagnostic positions
@@ -398,7 +433,7 @@ def report(tracts, pool, genes, arch, topo, locus, out):
         ax.set_xlabel("donor-diagnostic supporting positions per tract")
         ax.set_ylabel("tracts")
         ax.legend(fontsize=8)
-        ax.set_title("(e) impossible donors are as well supported\n"
+        ax.set_title("E  impossible donors are as well supported\n"
                      "as possible ones — evidence strength does not separate them",
                      fontsize=10)
     elif sig:
@@ -410,7 +445,7 @@ def report(tracts, pool, genes, arch, topo, locus, out):
         ax.set_xlabel("tract span (bp)")
         ax.set_ylabel("tracts")
         ax.legend(fontsize=8)
-        ax.set_title("(e) tract length distribution", fontsize=10)
+        ax.set_title("E  tract length distribution", fontsize=10)
 
     # (f) per-gene usage vs donor supply
     ax = fig.add_subplot(gs[1, 2])
@@ -426,10 +461,10 @@ def report(tracts, pool, genes, arch, topo, locus, out):
                             fontsize=6, xytext=(3, 3), textcoords="offset points")
         ax.set_xlabel("allowed donors")
         ax.set_ylabel("transcripts assigned")
-        ax.set_title("(f) expression vs donor supply", fontsize=10)
+        ax.set_title("F  expression vs donor supply", fontsize=10)
 
     fig.suptitle(f"{locus} — gene conversion analysis", fontsize=15, fontweight="bold")
-    fig.savefig(out, bbox_inches="tight")
+    save_figure(fig, out)
     plt.close(fig)
 
 
@@ -448,6 +483,7 @@ def main():
                          "the annotation's Productive flag.")
     ap.add_argument("--out-network", required=True)
     ap.add_argument("--out-report", required=True)
+    ap.add_argument("--out-matrix", help="Donor x parent matrix figure")
     args = ap.parse_args()
 
     tracts = read_tsv(args.tracts)
@@ -464,8 +500,155 @@ def main():
     tot, bad = donor_network(tracts, pool, genes, args.locus, args.j_pos,
                              args.out_network, rss=rss)
     report(tracts, pool, genes, arch, topo, args.locus, args.out_report)
+    if args.out_matrix:
+        if donor_matrix(tracts, pool, genes, args.locus, args.j_pos,
+                        args.out_matrix, rss=rss):
+            print(f"{args.locus}: wrote {args.out_matrix}")
+        else:
+            print(f"{args.locus}: no calls, matrix not written")
     print(f"{args.locus}: wrote {args.out_network} and {args.out_report} "
           f"({tot} significant tracts, {bad} impossible)")
+
+
+
+
+# ─── figure 3: donor x recipient matrix, split by recombination mechanism ─────
+
+def donor_matrix(tracts, pool, genes, locus, j_pos, out, rss=None):
+    """
+    One panel showing everything the arc plot shows, but readable when the array
+    is large.
+
+    Columns are the V genes actually used as a parent (usually few); rows are
+    every V gene, ordered along the locus.  Cell colour is the number of tracts,
+    on TWO scales: green where the donor survived recombination, red where it
+    was deleted and the call is impossible.  So legality and abundance are the
+    same visual channel and cannot be read apart by accident.
+
+    The column annotation strip carries the recombination mechanism, which is
+    the thing the arc plot could not show: an inversional parent retains the
+    whole array, so no cell in its column can ever be red, while a deletional
+    parent loses everything between itself and J.  The dashed step line marks
+    each deletional parent's own position, i.e. the boundary beyond which its
+    donors no longer exist.
+    """
+    order = sorted(pool, key=lambda g: int(pool[g]["pos"]))
+    ypos = {g: i for i, g in enumerate(order)}
+
+    counts, legal = Counter(), {}
+    for t in tracts:
+        if t["significant"] != "True":
+            continue
+        p, d = t["parent"], t["donor"]
+        if p not in ypos or d not in ypos:
+            continue
+        counts[(d, p)] += 1
+        legal[(d, p)] = t["donor_allowed"] == "True"
+
+    # Columns are every CANDIDATE parent, not merely those that produced a call.
+    # A candidate that yielded nothing is real information -- it says the gene
+    # can rearrange but no conversion was detected on it -- and dropping such
+    # columns makes "produced nothing" indistinguishable from "not a candidate".
+    candidates = {p for _, p in counts}
+    if rss is not None:
+        candidates |= {g for g, r in rss.items()
+                       if r.get("rss_state") == "rss_present" and g in pool}
+    parents = sorted(candidates, key=lambda g: int(pool[g]["pos"]))
+    if not parents:
+        return False
+    n_empty = sum(1 for p in parents if not any(pp == p for _, pp in counts))
+    nrow, ncol = len(order), len(parents)
+
+    pos_m = np.full((nrow, ncol), np.nan)
+    neg_m = np.full((nrow, ncol), np.nan)
+    for (d, p), c in counts.items():
+        j = parents.index(p)
+        (pos_m if legal[(d, p)] else neg_m)[ypos[d], j] = c
+
+    fig, (axm, axc) = plt.subplots(
+        2, 1, figsize=(max(5.5, 1.15 * ncol + 4.5), max(7.0, 0.085 * nrow + 3.4)),
+        gridspec_kw={"height_ratios": [nrow, 2.2], "hspace": 0.02}, sharex=True)
+
+    vmax = max(counts.values())
+    im_ok = axm.imshow(pos_m, cmap=locus_ramp_from(YES), aspect="auto", origin="lower",
+                       vmin=0, vmax=vmax)
+    im_no = axm.imshow(neg_m, cmap=locus_ramp_from(NO), aspect="auto", origin="lower",
+                       vmin=0, vmax=vmax)
+
+    # boundary: for a deletional parent, donors beyond its own position are gone
+    for j, p in enumerate(parents):
+        if pool[p]["mechanism"] != "deletion":
+            continue
+        y = ypos[p]
+        axm.plot([j - .5, j + .5], [y, y], color="black", lw=1.6,
+                 linestyle="--", zorder=6)
+
+    ystep = 1 if nrow <= 30 else (2 if nrow <= 60 else 4)
+    yticks = list(range(0, nrow, ystep))
+    axm.set_yticks(yticks)
+    axm.set_yticklabels([short(order[i]) for i in yticks],
+                        fontsize=7 if nrow <= 40 else 5.5)
+    # RSS state is carried by the TICK LABEL COLOUR rather than an extra marker
+    # column, which otherwise collides with the labels themselves.
+    if rss is not None:
+        for i, lab in zip(yticks, axm.get_yticklabels()):
+            state = rss.get(order[i], {}).get("rss_state", "rss_absent")
+            if state == "rss_present":
+                lab.set_color(RSS_COLORS["rss_present"])
+                lab.set_fontweight("bold")
+    axm.set_ylabel("donor V gene (ordered along locus)", fontsize=10)
+    axm.set_title(
+        f"{locus} — donors used per rearranged parent\n"
+        f"green = donor survived · red = donor deleted (impossible) · "
+        f"dashed = deletion boundary\n"
+        f"columns = all {len(parents)} candidate parents"
+        + (f" ({n_empty} produced no calls)" if n_empty else ""),
+        fontsize=12, fontweight="bold", pad=12)
+
+    # mechanism strip
+    MECH_C = {"deletion": SEGMENT["D"], "inversion": "#F8CD9C"}
+    for j, p in enumerate(parents):
+        axc.add_patch(Rectangle((j - .5, 0), 1, 1,
+                                color=MECH_C.get(pool[p]["mechanism"], "#cccccc")))
+        axc.text(j, 0.5, pool[p]["mechanism"][:3].upper(), ha="center",
+                 va="center", fontsize=7.5, color="white", fontweight="bold")
+        if not any(pp == p for _, pp in counts):
+            # candidate parent with zero calls: mark it so the empty column reads
+            # as a result rather than as missing data
+            axm.text(j, nrow * 0.5, "no calls", rotation=90, ha="center",
+                     va="center", fontsize=7.5, color="#999999", style="italic")
+    axc.set_xlim(-.5, ncol - .5)
+    axc.set_ylim(0, 1)
+    axc.set_yticks([])
+    axc.set_ylabel("mech.", fontsize=8, rotation=0, ha="right", va="center")
+    axc.set_xticks(range(ncol))
+    axc.set_xticklabels([short(p) for p in parents], rotation=90, fontsize=8)
+    axc.set_xlabel("rearranged parent V gene", fontsize=10)
+    for s in ("top", "right", "left"):
+        axc.spines[s].set_visible(False)
+
+    cb1 = fig.colorbar(im_ok, ax=[axm, axc], label="tracts — donor available",
+                       fraction=0.04, pad=0.02, aspect=28)
+    cb2 = fig.colorbar(im_no, ax=[axm, axc], label="tracts — impossible",
+                       fraction=0.04, pad=0.06, aspect=28)
+    for cb in (cb1, cb2):
+        cb.ax.tick_params(labelsize=7)
+        cb.set_label(cb.ax.get_ylabel(), fontsize=8)
+
+    handles = [Patch(facecolor=MECH_C["deletion"],
+                     label="deletion — donors between V and J are lost"),
+               Patch(facecolor=MECH_C["inversion"],
+                     label="inversion — whole array retained")]
+    if rss is not None:
+        handles.append(Line2D([], [], marker="s", linestyle="none", markersize=7,
+                              color=RSS_COLORS["rss_present"],
+                              label="donor label in blue = has RSS"))
+    axc.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -3.6),
+               ncol=1, fontsize=8.5, framealpha=0.95)
+
+    save_figure(fig, out)
+    plt.close(fig)
+    return True
 
 
 if __name__ == "__main__":
