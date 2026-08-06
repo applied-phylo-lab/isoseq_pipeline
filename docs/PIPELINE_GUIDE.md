@@ -316,9 +316,23 @@ relationship, labelled with the number of supporting transcripts.
 - **Arrow direction**: donor → recipient.
 - **Arrow thickness and its number**: transcripts supporting that pair. The number
   now sits directly on its own arc (see note below).
-- **Above the axis / teal**: topologically possible — the donor still existed.
-- **Below the axis / rose**: **impossible** — the donor had already been deleted.
-  This is the visible false-positive load.
+- **Above the axis / teal**: the best donor that survived the rearrangement.
+- **Grey**: a competing donor for the *same* tract — an alternative explanation
+  of one event, not a second event.
+- **Below the axis / rose**: **impossible** — *every* candidate donor for that
+  tract had been deleted. This is the visible false-positive load.
+
+> **The colour rule is per tract, not per donor.** If any legal donor can explain
+> a tract, the tract is drawn teal and all other candidates grey — including a
+> better-supported illegal one. The event is real; we just cannot say which gene
+> supplied it, and a possible explanation exists. Red is reserved for tracts with
+> *no* legal explanation at all.
+>
+> This matters a great deal for BrepConvert, which lists ~15 donors per event.
+> Marking it wrong for every impossible donor it happens to mention — even when
+> it also named a perfectly good one — put its IGH false-positive rate at
+> **38%**. Under the per-tract rule it is **14%** (25 of 176 tracts). The same
+> definition is what `gc_compare_methods.py` already called `impossible_lenient`.
 - **Marker colour**: navy = has RSS, grey = none.
 - **Marker shape**: points *toward* J = deletional, *away* = inversional.
 - **Marker size**: large = at least one transcript best-matches it, scored with

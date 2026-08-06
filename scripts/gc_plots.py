@@ -67,34 +67,70 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
     xof = {g: i for i, g in enumerate(order)}
     positions = [int(pool[g]["pos"]) for g in order]
 
-    # One tract can be explained by several donors that share the diagnostic
-    # bases.  Those are competing explanations of ONE event, not several events,
-    # so drawing them identically over-counts the network.  Where the detector
-    # has ranked them, the best-supported donor is drawn in colour and the
-    # runners-up in grey: the reader sees both the call and how contested it is.
-    pairs = Counter()
-    alt_pairs = Counter()
-    allowed_flag = {}
-    n_amb = n_regions = 0
-    seen_regions = set()
+    # ── which donor gets drawn, and in what colour ────────────────────────────
+    # Several donors can share the diagnostic bases and explain one tract. They
+    # are competing explanations of ONE event, so only one is drawn in colour.
+    #
+    # The choice is made per REGION, and legality wins over raw support:
+    #
+    #   any legal donor exists  -> draw the best LEGAL one in colour; everything
+    #                              else greys out, including a better-supported
+    #                              illegal donor. The event is real; we simply
+    #                              cannot tell which gene supplied it, and a
+    #                              topologically possible explanation exists.
+    #   no legal donor at all   -> draw the best illegal one in RED. Only here is
+    #                              the call genuinely impossible.
+    #
+    # Scoring illegality per-donor instead of per-region badly overstates the
+    # false-positive load: a method that lists many donors gets marked wrong for
+    # every impossible one it happens to mention, even when it also named a
+    # perfectly good donor for the same tract.
+    #
+    # Computed from the tract table itself rather than from a primary_donor
+    # column, so it works for BrepConvert output too -- which has no such column
+    # and lists ~15 donors per event.
+    regions = defaultdict(list)
     for t in tracts:
         if t["significant"] != "True":
             continue
         p, d = t["parent"], t["donor"]
         if p not in xof or d not in xof:
             continue
-        region = (t.get("transcript"), t.get("start"), t.get("end"))
-        if region not in seen_regions:
-            seen_regions.add(region)
-            n_regions += 1
-            if int(t.get("n_candidate_donors", 1) or 1) > 1:
-                n_amb += 1
-        # primary_donor is absent from older tract files and from BrepConvert
-        # output; treat everything as primary there so those figures are
-        # unchanged rather than silently emptied.
-        primary = t.get("primary_donor", "True") in ("True", "", None)
-        (pairs if primary else alt_pairs)[(d, p)] += 1
-        allowed_flag[(d, p)] = t["donor_allowed"] == "True"
+        # BrepConvert reports no support count and writes "NA"; fall back to a
+        # constant so every donor in such a region ties and the legal/illegal
+        # rule below is what decides, rather than an accidental ordering.
+        try:
+            m = int(t.get("n_support", 1) or 1)
+        except ValueError:
+            m = 1
+        regions[(t.get("transcript"), t.get("start"), t.get("end"), p)].append(
+            (d, t["donor_allowed"] == "True", m))
+
+    pairs = Counter()
+    alt_pairs = Counter()
+    allowed_flag = {}
+    n_regions = len(regions)
+    n_amb = n_impossible_regions = 0
+    for (_, _, _, p), cands in regions.items():
+        # de-duplicate donors within a region, keeping the best support
+        best_by_donor = {}
+        for d, ok, m in cands:
+            if d not in best_by_donor or m > best_by_donor[d][1]:
+                best_by_donor[d] = (ok, m)
+        legal = [(d, m) for d, (ok, m) in best_by_donor.items() if ok]
+        if len(best_by_donor) > 1:
+            n_amb += 1
+        if legal:
+            chosen = max(legal, key=lambda t: (t[1], t[0]))[0]
+        else:
+            chosen = max(best_by_donor.items(), key=lambda kv: (kv[1][1], kv[0]))[0]
+            n_impossible_regions += 1
+        pairs[(chosen, p)] += 1
+        allowed_flag[(chosen, p)] = bool(legal)
+        for d in best_by_donor:
+            if d != chosen:
+                alt_pairs[(d, p)] += 1
+                allowed_flag.setdefault((d, p), True)
 
     fig, ax = plt.subplots(figsize=(15, 8.5))
 
@@ -107,10 +143,10 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
             return FUNC_C if genes.get(g, {}).get("annotated_productive") == "True" else PSEUDO_C
         return RSS_COLORS.get(rss.get(g, {}).get("rss_state", "rss_absent"), PSEUDO_C)
 
-    # Expression is read from the UNCONSTRAINED assignment on purpose, so the
-    # size channel means the same thing in every figure. Under a constrained
-    # parent model only the parent can receive transcripts, which would make
-    # size a restatement of the model rather than a property of the data.
+    # Marker SIZE is expression, taken from the UNCONSTRAINED assignment when
+    # --usage-assignments is given so it means the same thing as on the overview
+    # locus map. Falling back to functional_genes.tsv makes size a restatement of
+    # colour, since that table only counts transcripts for RSS-bearing parents.
     # Marker SHAPE encodes transcriptional orientation relative to J, which is
     # what sets the recombination mechanism: same orientation -> deletion (the
     # intervening DNA is excised, so donors between V and J are lost); opposite
@@ -251,20 +287,22 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
             "donor was DELETED by the rearrangement — impossible",
             transform=ax.transAxes, ha="center", fontsize=10, color=IMPOSSIBLE_C)
 
-    tot = n_allowed + n_impossible
+    # Counted per REGION (one event = one call), not per donor listed.
+    tot = n_regions
+    n_impossible = n_impossible_regions
     frac = n_impossible / tot if tot else float("nan")
     # Only call them "significant" if the tracts actually carry a p-value.
     # BrepConvert-derived tracts do not, so labelling them significant would
     # imply a filter that was never applied.
     scored = any(t.get("p_corrected", "NA") not in ("NA", "") for t in tracts)
     what = "significant tracts" if scored else "donor-calls, no significance filter"
-    amb = (f"   ·   {n_amb}/{n_regions} tracts ({n_amb/n_regions:.0%}) have a "
-           f"competing donor (grey)" if n_regions and n_amb else "")
+    amb = (f"   ·   {n_amb}/{n_regions} ({n_amb/n_regions:.0%}) have a competing "
+           f"donor (grey)" if n_regions and n_amb else "")
     ax.set_title(
         f"{locus} — gene conversion donor→recipient relationships "
-        f"({tot} {what}){amb}\n"
-        f"{n_impossible}/{tot} = {frac:.0%} use a donor that recombination "
-        f"had already deleted",
+        f"({tot} distinct tracts){amb}\n"
+        f"{n_impossible}/{tot} = {frac:.0%} have NO topologically possible "
+        f"donor — recombination had deleted every candidate",
         fontsize=13, fontweight="bold", pad=16)
 
     # Line2D handles rather than Patch, so the legend shows the real marker
@@ -306,12 +344,12 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
         dot("#dddddd", 11, "black", "≥1 transcript best-matches it"),
         dot("#dddddd", 6.5, "#777777", "no transcript best-matches it"),
         spacer("$\\bf{arrow\\ colour}$"),
-        Patch(facecolor=ALLOWED_C, label="donor available"),
-        Patch(facecolor=IMPOSSIBLE_C, label="donor deleted (impossible)"),
+        Patch(facecolor=ALLOWED_C, label="best donor that survived"),
+        Patch(facecolor=IMPOSSIBLE_C, label="EVERY candidate was deleted"),
     ]
     if alt_pairs:
         handles.append(Patch(facecolor=GREY_DARK, alpha=0.45,
-                             label="competing donor for the same tract"))
+                             label="competing donor (incl. deleted ones)"))
     # matplotlib fills legend columns top-to-bottom, so the four blocks only line
     # up under their own headings when every block is the same height. Pad to the
     # tallest rather than letting an extra entry shunt the next heading upwards.

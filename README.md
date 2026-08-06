@@ -371,6 +371,12 @@ observed impossible fraction `f`:
 FDR = f / e
 ```
 
+Scored **per tract, not per donor**: a tract counts as impossible only when
+*every* candidate donor was deleted. Penalising a method for each impossible
+donor it lists, when it also named a legal one for the same tract, inflates the
+rate badly — BrepConvert's IGH figure moves from 38% to 14% under the correct
+definition.
+
 No distributional assumption at all. On **IGH deletional parents** this gives
 FDR ≈ 1.0 at every threshold — the donor *attribution* there is essentially
 random. In **IGL** the single parent sits at the J-proximal end so nothing is
