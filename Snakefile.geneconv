@@ -359,6 +359,7 @@ rule plots_detector:
         pool=f"{OUT}/{{locus}}_donor_pool.tsv",
         genes=f"{OUT}/functional_genes.tsv",
         rss=f"{OUT}/rss_annotation.tsv",
+        usage=f"{OUT}/unconstrained_assignments.tsv",
         arch=f"{OUT}/{{locus}}_locus_architecture_per_gene.tsv",
         topo=f"{OUT}/{{locus}}_topology_test.tsv",
     output:
@@ -372,6 +373,7 @@ rule plots_detector:
     shell:
         "{PY} {input.script} --tracts {input.tracts} --donor-pool {input.pool} "
         "--functional-genes {input.genes} --rss-annotation {input.rss} "
+        "--usage-assignments {input.usage} "
         "--architecture {input.arch} --topology {input.topo} "
         "--locus {wildcards.locus} --j-pos {params.j_pos} "
         "--out-network {output.network} --out-report {output.report} "
@@ -385,6 +387,7 @@ rule plots_brepconvert:
         pool=f"{OUT}/{{locus}}_donor_pool.tsv",
         genes=f"{OUT}/functional_genes.tsv",
         rss=f"{OUT}/rss_annotation.tsv",
+        usage=f"{OUT}/unconstrained_assignments.tsv",
     output:
         network=f"{OUT}/{{locus}}_arrows_brepconvert.pdf",
         report=f"{OUT}/{{locus}}_report_brepconvert.pdf",
@@ -396,6 +399,7 @@ rule plots_brepconvert:
     shell:
         "{PY} {input.script} --tracts {input.tracts} --donor-pool {input.pool} "
         "--functional-genes {input.genes} --rss-annotation {input.rss} "
+        "--usage-assignments {input.usage} "
         "--locus {wildcards.locus} --j-pos {params.j_pos} "
         "--out-network {output.network} --out-report {output.report} "
         "--out-matrix {output.matrix} 2>{log}"

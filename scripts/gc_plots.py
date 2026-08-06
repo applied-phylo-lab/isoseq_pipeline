@@ -62,7 +62,7 @@ def short(name):
 # ─── figure 1: donor -> recipient arcs along the locus ────────────────────────
 
 def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
-                  min_count=1, label_top=14):
+                  usage=None, min_count=1, label_top=14):
     order = sorted(pool, key=lambda g: int(pool[g]["pos"]))
     xof = {g: i for i, g in enumerate(order)}
     positions = [int(pool[g]["pos"]) for g in order]
@@ -120,7 +120,8 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
     j_dir = "left" if j_pos < min(positions) else "right"
     for g in order:
         x = xof[g]
-        ntx = int(genes.get(g, {}).get("n_transcripts", 0) or 0)
+        ntx = (usage.get(g, 0) if usage is not None
+               else int(genes.get(g, {}).get("n_transcripts", 0) or 0))
         expressed = ntx > 0
         mech = pool[g].get("mechanism", "")
         # point the marker toward J when co-oriented with it (deletional)
@@ -303,7 +304,7 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
         spacer("$\\bf{gene\\ size}$"),
         # neutral fill, not white: a white dot on a white legend is invisible
         dot("#dddddd", 11, "black", "≥1 transcript best-matches it"),
-        dot("#dddddd", 6.5, "#777777", "no transcript matches it"),
+        dot("#dddddd", 6.5, "#777777", "no transcript best-matches it"),
         spacer("$\\bf{arrow\\ colour}$"),
         Patch(facecolor=ALLOWED_C, label="donor available"),
         Patch(facecolor=IMPOSSIBLE_C, label="donor deleted (impossible)"),
@@ -530,6 +531,13 @@ def main():
                     help="rss_annotation.tsv from gc_rss_annotation.py. When "
                          "given, genes are coloured by RSS state instead of by "
                          "the annotation's Productive flag.")
+    ap.add_argument("--usage-assignments",
+                    help="unconstrained_assignments.tsv. Supplies the marker-SIZE "
+                         "channel (is this gene expressed?). Without it the size "
+                         "falls back to functional_genes.tsv, which only counts "
+                         "transcripts for RSS-bearing candidate parents -- so a "
+                         "donor-only gene can never be drawn as expressed and the "
+                         "size channel silently becomes a restatement of colour.")
     ap.add_argument("--out-network", required=True)
     ap.add_argument("--out-report", required=True)
     ap.add_argument("--out-matrix", help="Donor x parent matrix figure")
@@ -543,11 +551,21 @@ def main():
     if args.rss_annotation:
         rss = {r["gene"]: r for r in read_tsv(args.rss_annotation)
                if r["locus"] == args.locus}
+    # Expression from the UNCONSTRAINED assignment, so marker size means the
+    # same thing here as on the overview locus map: "some transcript's best
+    # match is this gene", regardless of whether the gene could rearrange.
+    # Colour already carries whether it can. Deriving size from the constrained
+    # table made the two channels redundant and hid every expressed donor.
+    usage = None
+    if args.usage_assignments:
+        usage = Counter(r["best_gene"] for r in read_tsv(args.usage_assignments)
+                        if r.get("locus") == args.locus)
+
     arch = read_tsv(args.architecture) if args.architecture else []
     topo = read_tsv(args.topology) if args.topology else []
 
     tot, bad = donor_network(tracts, pool, genes, args.locus, args.j_pos,
-                             args.out_network, rss=rss)
+                             args.out_network, rss=rss, usage=usage)
     report(tracts, pool, genes, arch, topo, args.locus, args.out_report)
     if args.out_matrix:
         if donor_matrix(tracts, pool, genes, args.locus, args.j_pos,

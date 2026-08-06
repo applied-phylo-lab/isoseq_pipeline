@@ -154,15 +154,72 @@ jumping and ordinary mutation can be misread as conversion. It works differently
    (a *donor-diagnostic* position).
 3. Require the supporting positions to be **contiguous within 5 bp** — a real
    conversion tract is a continuous stretch of donor sequence, not a scatter.
-4. Score by likelihood ratio with a Bonferroni correction over the donor pool:
-   `p_corrected = n_donors × 3⁻ᵐ`, where **m is the number of donor-diagnostic
-   positions supporting that tract**. Each such position is one of 3 possible
-   non-parent bases, so m positions agreeing by chance costs 3⁻ᵐ; multiplying by
-   the number of donors tested corrects for having looked at all of them.
+4. Keep tracts with at least **m** supporting positions, where m is set per locus
+   by calibration (below).
 
 The contiguity rule is what dropped the counts sharply (e.g. 3,646 → 116 in the
 VGP IGL run). Without it the "tracts" had a median span of 53 bp carrying only 7
 supporting positions — scattered agreement, not tracts.
+
+#### How the threshold is set — and why the p-value was dropped
+
+The original scoring was a likelihood ratio with a Bonferroni correction over the
+donor pool, `p_corrected = n_donors × 3⁻ᵐ`. **That has been abandoned.** It
+corrects for the wrong thing: `3⁻ᵐ` models the chance of matching a donor's base,
+but says nothing about **contiguity**, which is the constraint actually doing the
+work. It was therefore wildly conservative — with 162 IGH donors it demanded
+m ≥ 8 and returned 10 tracts in the entire locus. Benjamini–Hochberg does not
+help either: with `min_informative = 3` every raw p-value is ≤ 0.037 by
+construction, so BH accepts 100% of candidates.
+
+The threshold is now set empirically by two controls that constrain from opposite
+sides:
+
+**Permutation null (sets the floor).** Each transcript keeps its exact
+differences — same number, same substituted bases — but they are scattered to
+random positions. Contiguity is destroyed, everything else preserved, so any
+tract found is false by construction. Over 20 replicates:
+
+| m ≥ | IGL real | IGL null | IGH real | IGH null |
+|---|---|---|---|---|
+| 3 | 1776 | 0.80 | 1959 | 5.60 |
+| 4 | 556 | **0.00** | 513 | **0.00** |
+
+**AID spectrum (sets the ceiling).** The permutation scatters mutations, so it
+cannot detect *clustered* SHM being admitted as tracts. If the threshold is too
+loose, inside-tract differences start carrying an AID signature they should not
+have:
+
+| m ≥ | IGL tracts | IGL inside hotspot | IGH tracts | IGH inside hotspot |
+|---|---|---|---|---|
+| 4 | 556 | **1.26** ✗ | 513 | **1.45** ✗ |
+| 5 | 123 | 0.48 ✓ | 99 | 1.07 ✗ |
+| 6 | 93 | 0.40 ✓ | 42 | 0.88 ✓ |
+| 8 | 19 | 0.00 ✓ | 10 | 0.84 ✓ |
+
+**Chosen: m ≥ 5 for IGL, m ≥ 6 for IGH.** The loci differ because their donor
+pools differ (23 vs 162 genes) — the same logic Bonferroni was reaching for,
+calibrated empirically instead of analytically. Against the old rule this is a
+real relaxation: **IGH 10 → 28 tracts, IGL 93 → 122**, with no loss of
+specificity by any available control. The AID contrast is stable across
+m = 5…8, so the conclusion does not depend on where in that range the line falls.
+
+**Topology control.** Separately, a tract whose donor was already deleted is a
+known false positive. If a fraction `e` of the pool was deleted, false calls hit
+a deleted donor with probability `e`, so `FDR = f/e` with no distributional
+assumption. On IGH deletional parents this gives FDR ≈ 1.0 at every threshold —
+the donor *attribution* there is near-random, even though the tracts themselves
+are real. In IGL nothing is ever deleted (`e = 0`) so this control has no power,
+which is precisely why the permutation null exists.
+
+#### Competing donors
+
+Several donors can share the diagnostic bases and explain one tract. Those are
+alternative explanations of **one** event, not several events. The detector ranks
+them and flags the best as `primary_donor`; the arrow figures draw the primary in
+colour and the runners-up in grey. Ambiguity is far worse in IGH (67% of tracts
+at m ≥ 4 have a competitor) than in IGL (13%), which is the same fact the
+topology control reports from the other direction.
 
 ### 11. The AID hotspot spectrum test — the strongest evidence
 
@@ -170,23 +227,40 @@ This is the test that actually separates the two processes, and it does not depe
 on the donor pool at all.
 
 **Somatic hypermutation** is done by AID, which is not random: it targets WRCY /
-RGYW motifs (hotspots) and avoids SYC / GRS (coldspots). **Gene conversion** copies
-a block of donor sequence — the resulting differences sit wherever the donor
-happened to differ, with no relationship to AID motifs.
+RGYW motifs (hotspots) **and avoids** SYC / GRS (coldspots). **Gene conversion**
+copies a block of donor sequence — the resulting differences sit wherever the
+donor happened to differ, with no relationship to AID motifs.
 
-So: differences *outside* tracts should be hotspot-enriched; differences *inside*
-tracts should not be.
+Both arms matter. Hotspots alone cannot distinguish "AID acted here" from
+"mutations are clustered here for any reason at all"; a process that merely
+concentrates mutations would move hotspots and coldspots the **same** direction.
+Only AID pushes them in **opposite** directions. So the test has four cases, and
+the prediction is directional in each:
 
-| | outside tracts | inside tracts |
+|  | hotspot (WRCY/RGYW) | coldspot (SYC/GRS) |
 |---|---|---|
-| **IGL** | **2.20×** enriched (p = 0.001) | 0.40× (n.s.) |
-| **IGH** | **2.12×** enriched (p = 0.001) | 0.83× (n.s.) |
+| **IGL outside tracts** | ×2.23 ↑ (p = 0.002) | ×0.40 ↓ (p = 0.002) |
+| **IGL inside tracts** | ×0.48 ↓ (p = 0.002) | ×1.55 ↑ (p = 0.002) |
+| **IGH outside tracts** | ×2.18 ↑ (p = 0.002) | ×0.51 ↓ (p = 0.002) |
+| **IGH inside tracts** | ×0.91 (n.s.) | ×0.69 (p = 0.084) |
 
-Both loci, in the predicted direction, against a permutation null that shuffles
-positions within each gene. **Circularity check:** if the tract detector were
-simply picking non-hotspot positions by construction, this would be an artifact.
-It isn't — donor-difference positions are hotspot-neutral (10.7% vs 10.2%
-background).
+Outside-tract differences carry a textbook AID signature in both loci — enriched
+at hotspots *and* depleted at coldspots. Inside-tract differences do not; in IGL
+they run the other way entirely, which is a stronger result than mere absence.
+
+The null redistributes each transcript's mutations at random over the positions
+actually covered in that same gene, keeping the count fixed (1000 permutations).
+This controls for base composition, without which raw motif percentages are
+meaningless.
+
+**Circularity check:** if the tract detector were simply picking non-hotspot
+positions by construction, this would be an artifact. It isn't — donor-difference
+positions are hotspot-neutral (10.7% vs 10.2% background).
+
+> Note that the tract threshold was chosen partly using this test (step 10), so
+> at the chosen m the AID result is not fully independent evidence. What rescues
+> it is stability: the contrast holds across m = 5…8, so no particular choice
+> manufactures it.
 
 ---
 
@@ -247,7 +321,18 @@ relationship, labelled with the number of supporting transcripts.
   This is the visible false-positive load.
 - **Marker colour**: navy = has RSS, grey = none.
 - **Marker shape**: points *toward* J = deletional, *away* = inversional.
-- **Marker size**: large = at least one transcript best-matches it.
+- **Marker size**: large = at least one transcript best-matches it, scored with
+  **every** V gene eligible (`unconstrained_assignments.tsv`). Colour says
+  whether a gene *can* rearrange; size says whether the data *point at it*.
+  Keeping those independent is the whole value of the two channels — a large
+  grey marker (expressed, no RSS) is an interesting object, either a missed RSS
+  or a donor so heavily copied that transcripts drift onto it.
+
+  > Earlier versions took size from `functional_genes.tsv`, which only counts
+  > transcripts for RSS-bearing candidate parents. A donor-only gene therefore
+  > had `n_transcripts = 0` by construction and could never be drawn large, so
+  > size silently restated colour and disagreed with the overview locus map.
+  > Fixed; pass `--usage-assignments` to `gc_plots.py`.
 - **Teal diamond**: the J gene, at whichever end it sits.
 
 Suffixes: `_detector` = our detector, `_brepconvert` = BrepConvert. In the VGP run
@@ -279,15 +364,51 @@ Donor × recipient heatmap, viridis_r (dark purple = many tracts).
 
 ### `IGx_aid_spectrum.pdf` — the key evidence figure
 
+**Only panel A is evidence.** B and C are reported for completeness and do not
+support the hypothesis — see below.
+
 | Panel | What it shows |
 |---|---|
-| **A** | AID hotspot targeting, inside vs outside tracts, against the permutation null |
-| **B** | Transition bias |
-| **C** | C:G targeting |
-| **D** | Full substitution spectrum |
+| **A** | All four cases: {hotspot, coldspot} × {outside, inside}, as fold-change against the permutation null, on a log axis so enrichment and depletion are symmetric about 1× |
+| **B** | Transition bias — **confounded, not evidence** |
+| **C** | C:G targeting — **no signal against the correct baseline** |
+| **D** | Full substitution spectrum (descriptive) |
 
-Panel A is the result: outside-tract differences are hotspot-enriched (AID/SHM),
-inside-tract differences are not (copied from a donor).
+Panel A is the result, and the shape to look for is the **mirror image**:
+outside-tract bars go up on hotspots and down on coldspots; inside-tract bars do
+the reverse (IGL) or nothing (IGH).
+
+**Why panel B is not evidence.** The prediction is that outside (SHM) should be
+more transition-biased than inside (conversion). The loci disagree:
+
+| | outside | inside | verdict |
+|---|---|---|---|
+| IGL | 0.77 | 1.28 | **backwards** |
+| IGH | 0.89 | 0.80 | weakly consistent |
+
+The confound: conversion copies differences accumulated between **paralogues over
+evolutionary time**, and molecular evolution is itself strongly transition-biased.
+Inside-tract differences inherit an ancient transition bias that has nothing to do
+with AID, so Ti/Tv cannot separate the two processes here.
+
+**Why panel C is not evidence.** An earlier version drew a hardcoded 0.5 baseline,
+which was simply wrong — the correct expectation is the C+G content of the covered
+positions (0.586 in IGL, 0.641 in IGH), taken from the same permutation as panel
+A. Against the proper baseline there is no C:G enrichment anywhere:
+
+| | observed | expected | ratio |
+|---|---|---|---|
+| IGL outside | 0.495 | 0.586 | 0.85 |
+| IGL inside | 0.558 | 0.586 | 0.95 |
+| IGH outside | 0.621 | 0.641 | 0.97 |
+| IGH inside | 0.546 | 0.644 | 0.85 |
+
+This does not contradict panel A: hotspot motifs are C/G-centred by definition,
+but they account for only ~20% of outside-tract differences, so a 2.2×
+enrichment there barely shifts the *global* C:G fraction.
+
+**For the paper:** panel A in the main figure; B and C to supplementary with the
+confound stated, or dropped.
 
 ### `IGH_d_usage.pdf`
 
