@@ -348,9 +348,30 @@ The supplemental figure making the case that matched germline data is necessary.
 Five haplotypes, the same transcripts throughout, all scored against `bAgePho2_pri`.
 
 The design point is the **control**: `bAgePho2_alt` is the *same bird's other
-haplotype*. Any discordance there is assembly and haplotype noise, not individual
-mismatch. Without it a discordance rate has no baseline and you cannot separate
-"wrong bird" from "two assemblies never agree perfectly".
+haplotype*. Without some such baseline a discordance rate means nothing, because
+you cannot separate "wrong bird" from "no two assemblies ever agree perfectly".
+
+**What that control is not.** It is *not* a technical noise floor. The bird is
+diploid and both haplotypes are transcribed, so a V gene on the alt haplotype is a
+genuinely expressible gene with its own alleles. When a transcript is assigned to
+an alt gene rather than the pri orthologue, that can be the **correct** answer —
+the transcript may really have come from the alt allele. So the 21.5% mixes:
+
+- real allelic origin (the transcript came from the other haplotype's copy);
+- genuine content and copy-number differences between the two haplotypes;
+- assembly differences (fragmentation, collapsed or duplicated genes).
+
+What it actually measures is the floor imposed by scoring a **diploid animal
+against a haploid reference** — the irreducible cost of picking one haplotype.
+That cost applies to the matched reference too: `bAgePho2_pri` is also only half
+this bird's germline.
+
+**Why it is still the right control.** Every different-bird reference pays that
+same haploid-reference cost *and* adds between-individual divergence on top, so
+the excess over the same-bird row still isolates the effect of using a different
+animal. If anything the baseline is generous — part of the 21.5% is real biology
+rather than error, so the true technical floor is lower and the different-bird
+penalty larger than the subtraction implies.
 
 | Reference | Locus | Different parent | Median identity gain |
 |---|---|---|---|
@@ -360,13 +381,20 @@ mismatch. Without it a discordance rate has no baseline and you cannot separate
 | bAgePho1_alt | IGL | 31.1% | +0.00% |
 | bAgePho0_pri | IGL | 30.3% | +0.00% |
 | bAgePho1_pri | IGL | 29.9% | +0.15% |
-| **bAgePho2_alt** | IGL | **21.5%** | +0.00% | ← same bird |
+| **bAgePho2_alt** | IGL | **21.5%** | +0.00% | ← same bird, other haplotype |
 
-The result to quote: in IGL the same-bird floor is 21.5%, and the different-bird
-references sit at 29.9–31.1% — roughly **9 points of excess attributable
-specifically to using a different animal**. And the third panel is the warning:
+The result to quote: in IGL the haploid-reference floor is 21.5%, and the
+different-bird references sit at 29.9–31.1% — roughly **9 points of excess
+attributable specifically to using a different animal**, on top of a floor that is
+itself partly real biology. And the third panel is the warning:
 median identity gain is **0.00%** for IGL. No summary statistic would have told
 you anything was wrong. The sequences look fine; the *assignments* are wrong.
+
+The third panel encodes locus with **colour only** (IGH blue, IGL green); marker
+shape says whether the reference is the same bird (diamond) or a different one
+(circle). An earlier version used both colour *and* shape for locus and then
+overrode the colour on the control point, which put a blue square on the plot that
+matched nothing in the legend.
 
 > These five haplotypes went through the **reference-swap comparison only** — the
 > transcripts were re-aligned to each haplotype's V genes and re-scored. They were

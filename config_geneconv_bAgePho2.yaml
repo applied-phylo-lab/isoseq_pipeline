@@ -56,6 +56,7 @@ rscript: "/home/kav67/miniconda3/envs/R_env/bin/Rscript"
 
 loci:
   IGH:
+    min_support_significant: 6
     vgene_fasta: "data/vgenes/bAgePho2_pri_IGH.fasta"
     # J not located; the anchor and orientation come from the D cluster and the
     # inference documented above. j_pos is set beyond the D cluster only so the
@@ -68,6 +69,7 @@ loci:
     dgene_fasta: "data/dgenes/bAgePho2_IGHD.fasta"
     jgene_fasta: "data/jgenes/blackbird_IGHJ.fasta"
   IGL:
+    min_support_significant: 5
     vgene_fasta: "data/vgenes/bAgePho2_pri_IGL.fasta"
     j_pos: 6339420
     j_strand: "+"
@@ -89,3 +91,9 @@ tract_p_threshold: 0.05
 
 # ─── D gene usage ─────────────────────────────────────────────────────────────
 d_min_match: 6
+
+# Significance is called on the number of donor-diagnostic positions,
+# calibrated by permutation + AID spectrum, not on the analytic 3^-m
+# p-value: that models base identity but not CONTIGUITY, which is the
+# constraint actually doing the work, so it penalises the wrong thing.
+tract_correction: "support"

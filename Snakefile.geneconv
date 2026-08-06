@@ -191,6 +191,14 @@ rule detect_tracts:
         # a conversion tract is contiguous donor sequence, not diffuse similarity
         max_gap=config.get("max_gap_bp", 5),
         p=config.get("tract_p_threshold", 0.05),
+        correction=config.get("tract_correction", "support"),
+        # Per-locus support cutoff. Not a tuned parameter: it is read off two
+        # independent calibrations (see docs/PIPELINE_GUIDE.md). The permutation
+        # null sets the floor at 4, and the AID spectrum then shows where
+        # tract-internal differences stop carrying an AID signature -- 5 in IGL,
+        # 6 in IGH. IGH needs more because it searches 162 donors to IGL's 23,
+        # so a contiguous chance match is correspondingly easier to find.
+        min_support=lambda wc: lc(wc, "min_support_significant"),
     log:
         f"{RESULTS}/logs/geneconv/{{locus}}_tracts.log",
     shell:
@@ -198,6 +206,8 @@ rule detect_tracts:
         "--assignments {input.assignments} --donor-pool {input.pool} "
         "--locus {wildcards.locus} --min-informative {params.min_informative} "
         "--max-gap-bp {params.max_gap} --p-threshold {params.p} "
+        "--correction {params.correction} "
+        "--min-support-significant {params.min_support} "
         "--out-tracts {output.tracts} --out-summary {output.summary} 2>{log}"
 
 

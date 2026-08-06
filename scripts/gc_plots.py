@@ -67,15 +67,33 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
     xof = {g: i for i, g in enumerate(order)}
     positions = [int(pool[g]["pos"]) for g in order]
 
+    # One tract can be explained by several donors that share the diagnostic
+    # bases.  Those are competing explanations of ONE event, not several events,
+    # so drawing them identically over-counts the network.  Where the detector
+    # has ranked them, the best-supported donor is drawn in colour and the
+    # runners-up in grey: the reader sees both the call and how contested it is.
     pairs = Counter()
+    alt_pairs = Counter()
     allowed_flag = {}
+    n_amb = n_regions = 0
+    seen_regions = set()
     for t in tracts:
         if t["significant"] != "True":
             continue
         p, d = t["parent"], t["donor"]
         if p not in xof or d not in xof:
             continue
-        pairs[(d, p)] += 1
+        region = (t.get("transcript"), t.get("start"), t.get("end"))
+        if region not in seen_regions:
+            seen_regions.add(region)
+            n_regions += 1
+            if int(t.get("n_candidate_donors", 1) or 1) > 1:
+                n_amb += 1
+        # primary_donor is absent from older tract files and from BrepConvert
+        # output; treat everything as primary there so those figures are
+        # unchanged rather than silently emptied.
+        primary = t.get("primary_donor", "True") in ("True", "", None)
+        (pairs if primary else alt_pairs)[(d, p)] += 1
         allowed_flag[(d, p)] = t["donor_allowed"] == "True"
 
     fig, ax = plt.subplots(figsize=(15, 8.5))
@@ -128,6 +146,20 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
 
     maxc = max(pairs.values()) if pairs else 1
     top = {k for k, _ in pairs.most_common(label_top)}
+
+    # Alternatives first, so a contested arc never hides the call it competes
+    # with.  They carry no label and no arrowhead weight -- they are context.
+    for (d, p), c in alt_pairs.items():
+        if (d, p) in pairs:
+            continue                      # already drawn as somebody's primary
+        x0, x1 = xof[d], xof[p]
+        sign = 1 if allowed_flag[(d, p)] else -1
+        travel = 1 if x1 > x0 else -1
+        ax.add_patch(FancyArrowPatch(
+            (x0, 0), (x1, 0),
+            connectionstyle=f"arc3,rad={-0.42 * sign * travel}",
+            arrowstyle="-|>", mutation_scale=8, lw=0.6,
+            color=GREY_DARK, alpha=0.32, zorder=2))
 
     n_allowed = n_impossible = 0
     labels = []
@@ -225,9 +257,11 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
     # imply a filter that was never applied.
     scored = any(t.get("p_corrected", "NA") not in ("NA", "") for t in tracts)
     what = "significant tracts" if scored else "donor-calls, no significance filter"
+    amb = (f"   ·   {n_amb}/{n_regions} tracts ({n_amb/n_regions:.0%}) have a "
+           f"competing donor (grey)" if n_regions and n_amb else "")
     ax.set_title(
         f"{locus} — gene conversion donor→recipient relationships "
-        f"({tot} {what})\n"
+        f"({tot} {what}){amb}\n"
         f"{n_impossible}/{tot} = {frac:.0%} use a donor that recombination "
         f"had already deleted",
         fontsize=13, fontweight="bold", pad=16)
@@ -274,8 +308,23 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
         Patch(facecolor=ALLOWED_C, label="donor available"),
         Patch(facecolor=IMPOSSIBLE_C, label="donor deleted (impossible)"),
     ]
+    if alt_pairs:
+        handles.append(Patch(facecolor=GREY_DARK, alpha=0.45,
+                             label="competing donor for the same tract"))
+    # matplotlib fills legend columns top-to-bottom, so the four blocks only line
+    # up under their own headings when every block is the same height. Pad to the
+    # tallest rather than letting an extra entry shunt the next heading upwards.
+    blocks, cur = [], []
+    for h in handles:
+        if h.get_label().startswith("$\\bf{") and cur:
+            blocks.append(cur)
+            cur = []
+        cur.append(h)
+    blocks.append(cur)
+    tallest = max(len(b) for b in blocks)
+    handles = [h for b in blocks for h in (b + [spacer("")] * (tallest - len(b)))]
     ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.30),
-              ncol=4, fontsize=9, framealpha=0.95, borderpad=0.9,
+              ncol=len(blocks), fontsize=9, framealpha=0.95, borderpad=0.9,
               columnspacing=1.8, handletextpad=0.7)
 
     ax.set_xlabel("V gene (contig position, ordered; J-proximal end nearest J marker)",
