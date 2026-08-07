@@ -319,7 +319,7 @@ Covered in the statistics section and in `docs/PIPELINE_GUIDE.md`.
 
 ## The statistical tests, in detail
 
-Six independent tests are run. They are listed here with what each one assumes,
+Nine tests are run. They are listed here with what each one assumes,
 what it can prove, and — importantly — what it cannot.
 
 ### Test 1 — Is a tract more than chance? (analytic, **superseded**)
@@ -388,19 +388,53 @@ AID initiates both processes but only SHM leaves its fingerprint on the result:
 SHM mutates *at* the AID-targeted base, conversion copies a donor and the
 differences land wherever the donor happened to differ.
 
-*Null* each transcript's mutations are redistributed at random over the
-positions actually covered in that same gene, keeping the count fixed
-(1000 permutations). This controls for base composition, which otherwise makes
-raw motif percentages meaningless.
+*Null* each transcript's mutations are redistributed at random over positions it
+could have occupied, keeping the count fixed (1000 permutations). Two frames are
+computed: **gene-wide** (anywhere covered in that gene) and **tract-restricted**
+(inside-tract mutations stay within that transcript's tract windows, outside ones
+stay outside). The strict frame is the defensible one and is what the figure
+plots — a gene-wide null would ask whether tracts *sit* at hotspots rather than
+whether the differences inside them are AID-driven. Restricting it does not
+weaken the result; in IGH it flips inside-tract coldspots from ×0.69 (n.s.) to
+×1.66 (p = 0.004), matching IGL.
 
 Prediction, and result at the calibrated thresholds:
 
-| | hotspot (WRCY/RGYW) | coldspot (SYC/GRS) |
+|  | hotspot (WRCY/RGYW) | coldspot (SYC/GRS) |
 |---|---|---|
-| **IGL outside tracts** | ×2.23 (p = 0.001) ↑ | ×0.40 (p = 0.001) ↓ |
-| **IGL inside tracts** | ×0.48 (p = 0.001) ↓ | ×1.56 (p = 0.001) ↑ |
-| **IGH outside tracts** | ×2.18 (p = 0.002) ↑ | ×0.51 (p = 0.002) ↓ |
-| **IGH inside tracts** | ×0.91 (n.s.) | ×0.69 (p = 0.084) |
+| **IGL outside tracts** | ×2.24 ↑ (p = 0.002) | ×0.40 ↓ (p = 0.002) |
+| **IGL inside tracts** | ×0.55 ↓ (p = 0.002) | ×1.47 ↑ (p = 0.002) |
+| **IGH outside tracts** | ×2.23 ↑ (p = 0.002) | ×0.51 ↓ (p = 0.002) |
+| **IGH inside tracts** | ×0.78 (n.s.) | ×1.68 ↑ (p = 0.014) |
+
+> **Counting unit: one observation per CLONE per tract.** A tract carried by many
+> transcripts is one event only if those transcripts are clonal descendants;
+> counting them separately would be pseudoreplication, and collapsing genuinely
+> independent rearrangements would throw away real replication. Which applies is
+> testable, because the VDJ junction is created once at rearrangement and
+> inherited: transcripts are clustered by junction identity (≥95%) within a
+> parent, and an inside-tract difference is counted once per clone per tract.
+>
+> The two loci turn out to differ. In **IGL**, transcripts sharing a tract have
+> junctions **no more similar than random pairs** (median identity 0.267 in both;
+> 1% vs 0% above 95%) — they are independent rearrangements that happen to carry
+> the same tract, i.e. *recurrent* conversion. 520 transcripts resolve to 396
+> clones and the inside class barely shrinks (779 → 712). In **IGH** they are
+> substantially clonal (50% of within-tract pairs above 95% junction identity
+> against 1% background); 68 transcripts resolve to 54 clones.
+>
+> Collapsing to one observation per *tract* regardless of clonality — an
+> intermediate version of this analysis — over-corrected badly, cutting IGL's
+> inside class to 92 and erasing a real effect. `--count-clonal-copies` disables
+> collapsing entirely; omitting `--transcripts` falls back to per-tract
+> collapsing.
+>
+> These tracts are also **not** allelic: of 20 distinct IGL tracts, **0** have
+> their donor-diagnostic bases present in the same bird's other haplotype.
+
+
+These are against the **tract-restricted null**, which is what panel A plots; the
+gene-wide value is drawn on each bar as a dashed tick for comparison.
 
 Outside-tract differences carry a textbook AID signature — enriched at hotspots
 **and** depleted at coldspots. Inside-tract differences do not; in IGL they run
@@ -411,12 +445,40 @@ direction, and only AID pushes them in opposite directions.
 *Circularity check:* donor-difference positions are hotspot-neutral (10.7% vs
 10.2% background), so the detector is not simply selecting non-hotspot positions.
 
-### Test 5 — Transition bias and C:G targeting (**not evidence — see below**)
+### Test 5 — Clonality, i.e. what counts as one observation
+
+Every AID enrichment is a fraction over differences, so it depends on what counts
+as independent. A tract carried by 40 transcripts is one event if they are clonal
+descendants and forty if they are independent rearrangements; the first counted
+forty times is pseudoreplication, the second collapsed to one discards real
+replication.
+
+*Statistic* VDJ junction identity — the N-region 3′ of the V gene is created once
+at rearrangement and inherited, so clonal relatives share it. Transcripts are
+clustered within a parent at ≥95% identity over the 45 bp junction, and an
+inside-tract difference is counted once per clone per tract.
+
+| | sharing a tract | random pairs | transcripts → clones |
+|---|---|---|---|
+| **IGL** | median 0.267, 1% ≥95% | median 0.267, 0% ≥95% | 520 → 396 |
+| **IGH** | median 0.722, 50% ≥95% | median 0.267, 1% ≥95% | 68 → 54 |
+
+IGL transcripts sharing a tract are no more related than random pairs — recurrent
+conversion, not clonal expansion — so the inside class barely shrinks (779 → 712).
+IGH is substantially clonal. Collapsing per *tract* instead of per *clone*
+over-corrects: IGL's inside class falls to 92 and the effect (×0.55, p = 0.002)
+vanishes (×0.90, p = 0.77).
+
+*Allelic control* the same recurrence would follow if a "tract" were just the
+other haplotype's allele. It is not: of 20 distinct IGL tracts, 0 have their
+donor-diagnostic bases in `bAgePho2_alt`.
+
+### Test 6 — Transition bias and C:G targeting (**not evidence — see below**)
 
 Reported for completeness. Neither supports the hypothesis; see "What the
 spectrum panels do and do not show".
 
-### Test 6 — Topology / evolutionary hypothesis (**vacuous, honestly reported**)
+### Test 7 — Topology / evolutionary hypothesis (**vacuous, honestly reported**)
 
 Mann–Whitney U comparing donor availability for functional vs non-functional
 genes. It returns nothing usable, because in IGL the parent has **zero** deleted
@@ -428,7 +490,7 @@ side. Functional genes sit exactly where the test has no power, which is what
 the hypothesis predicts. It cannot be reported as a p-value, and
 `IGx_report_*.pdf` panel C says so on its face.
 
-### Test 7 — D gene usage (negative result)
+### Test 8 — D gene usage (negative result)
 
 Longest shared stretch between the junction and each D gene, against a
 shuffled-junction null. Median junction is 32 bp; observed match 7 bp vs 6.5 bp
@@ -436,7 +498,7 @@ by chance; only 4/70 transcripts give a confident call and those average 8 tied
 D genes. **D usage is not determinable from this data.** The figure is included
 because the answer is a real result, not because the numbers are usable.
 
-### Test 8 — Germline reference comparison
+### Test 9 — Germline reference comparison
 
 Same transcripts scored against each reference; genes paired by **best reciprocal
 alignment** so "different gene" means genuinely different, not differently named.
@@ -458,11 +520,14 @@ Sweeping the support cutoff:
 
 | m ≥ | IGL tracts | IGL inside hotspot | IGH tracts | IGH inside hotspot |
 |---|---|---|---|---|
-| 4 | 556 | **1.26** ✗ | 513 | **1.45** ✗ |
-| 5 | 123 | 0.48 ✓ | 99 | 1.07 ✗ |
-| 6 | 93 | 0.40 ✓ | 42 | 0.88 ✓ |
-| 7 | 36 | 0.64 ✓ | 15 | 0.83 ✓ |
-| 8 | 19 | 0.00 ✓ | 10 | 0.84 ✓ |
+| 4 | 556 | 0.96 | 513 | 1.29 |
+| 5 | 123 | 0.89 | 99 | 1.12 |
+| 6 | 93 | 0.92 | 42 | 0.91 |
+| 7 | 36 | 0.90 | 15 | 0.72 |
+
+Recomputed after the clonal-copy fix. An earlier version of this sweep counted
+clonal copies and put IGL m ≥ 4 at ×1.26, which is what originally ruled it out.
+It should not have.
 
 **Chosen: m ≥ 5 for IGL, m ≥ 6 for IGH** — the point at which inside-tract
 differences stop looking AID-driven. The loci differ because their donor pools

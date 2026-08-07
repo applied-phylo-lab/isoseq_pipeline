@@ -107,8 +107,20 @@ def panel_funnel(ax, steps):
 
 
 def panel_usage(ax, usage, locus, top_n, vmax, letter, source=""):
+    # Pick the top N by usage, then RE-ORDER THEM BY POSITION. Ranking by count
+    # answers "which gene is used most"; ordering the result by position answers
+    # "where in the array does usage sit", which is the question this locus poses
+    # -- and it lets the bars be read directly against the locus maps below.
     rows = [r for r in sorted(usage, key=lambda r: -int(r["total_transcripts"]))
             if int(r["total_transcripts"]) > 0][:top_n]
+    # The usage rows carry only gene + count, so position comes from the gene
+    # name (<prefix>.<pos>.<contig>...), which is what short() already extracts.
+    def gpos(r):
+        try:
+            return int(short(r["gene"]))
+        except (ValueError, IndexError):
+            return 0
+    rows.sort(key=gpos)
     if not rows:
         ax.axis("off")
         ax.text(.5, .5, f"no {locus} usage", ha="center", transform=ax.transAxes)
@@ -121,7 +133,7 @@ def panel_usage(ax, usage, locus, top_n, vmax, letter, source=""):
     ax.set_yticks(range(len(names)))
     ax.set_yticklabels(names, fontsize=7)
     ax.set_xlabel("transcripts", fontsize=9)
-    ax.set_title(f"{letter}  top {len(rows)} {locus} V genes by usage"
+    ax.set_title(f"{letter}  top {len(rows)} {locus} V genes, ordered by position"
                  + (f"\n{source}" if source else ""),
                  fontsize=11, fontweight="bold", loc="left")
     for s in ("top", "right"):
@@ -225,8 +237,17 @@ def panel_map(ax, genes, locus, j_pos, vmax, letter):
         ax.spines[s].set_visible(False)
     ax.spines["bottom"].set_position(("outward", 8))
     ax.ticklabel_format(axis="x", style="plain", useOffset=False)
-    ax.set_xticklabels([f"{int(t):,}" for t in ax.get_xticks()], fontsize=8)
-    ax.set_xlabel("contig position (bp)", fontsize=9, loc="left")
+    # kb below a megabase, Mb above -- raw bp gives either six-digit ticks or a
+    # detached "1e6" offset, both of which are harder to read than the number.
+    hi_pos = max(abs(v) for v in ax.get_xlim())
+    if hi_pos >= 1e6:
+        unit, div, dec = "Mb", 1e6, 3
+    else:
+        unit, div, dec = "kb", 1e3, 0
+    ticks = ax.get_xticks()
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([f"{t / div:.{dec}f}" for t in ticks], fontsize=8)
+    ax.set_xlabel(f"contig position ({unit})", fontsize=9, loc="left")
     n_rss = sum(1 for g in genes if g["rss"])
     n_plus = sum(1 for g in genes if g["strand"] == "+")
     ax.set_title(
@@ -247,7 +268,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--skera-summary")
-    ap.add_argument("--prefilter-stats", required=True)
+    ap.add_argument("--prefilter-stats",
+                    help="Optional. The IG prescreen only exists for runs where "
+                         "the FLNC set was too large to cluster whole (the "
+                         "blackbird's 91M reads); datasets that clustered "
+                         "directly have no such file and the funnel simply "
+                         "starts at the clustered transcripts.")
     ap.add_argument("--filter-stats", required=True)
     ap.add_argument("--merge-stats")
     ap.add_argument("--immunotools-filtering", nargs="*", default=[],
@@ -271,7 +297,8 @@ def main():
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
-    pre, filt = read_kv(args.prefilter_stats), read_kv(args.filter_stats)
+    pre = read_kv(args.prefilter_stats) if args.prefilter_stats else {}
+    filt = read_kv(args.filter_stats)
     skera = {}
     if args.skera_summary:
         for line in open(args.skera_summary):
@@ -279,7 +306,8 @@ def main():
                 k, v = line.rstrip("\n").rsplit(",", 1)
                 skera[k] = v
 
-    flnc, ig_flnc = int(pre["flnc_reads"]), int(pre["ig_flnc_reads"])
+    flnc = int(pre["flnc_reads"]) if "flnc_reads" in pre else None
+    ig_flnc = int(pre["ig_flnc_reads"]) if "ig_flnc_reads" in pre else None
     total_tx, ig_tx = int(filt["total_transcripts"]), int(filt["ig_transcripts"])
 
     steps = []
@@ -288,10 +316,15 @@ def main():
         steps.append(("segmented reads (skera)",
                       int(skera["Segmented Reads (S-Reads)"]),
                       f"×{float(skera['Mean Array Size (Concatenation Factor)']):.1f} array"))
-    steps += [("FLNC reads", flnc, ""),
-              ("IG-screened FLNC", ig_flnc, f"{ig_flnc/flnc*100:.4f}% of FLNC"),
-              ("clustered transcripts", total_tx, ""),
-              ("IG transcripts", ig_tx, f"{ig_tx/total_tx*100:.1f}% of clustered")]
+    if flnc is not None:
+        steps.append(("FLNC reads", flnc, ""))
+    if ig_flnc is not None and flnc:
+        steps.append(("IG-screened FLNC", ig_flnc, f"{ig_flnc/flnc*100:.4f}% of FLNC"))
+    pct = ig_tx / total_tx * 100 if total_tx else 0.0
+    # a pooled multi-run total makes this ~0.001%, which prints as "0.0%"
+    pct_s = f"{pct:.1f}%" if pct >= 0.1 else f"{pct:.4f}%"
+    steps += [("clustered transcripts", total_tx, ""),
+              ("IG transcripts", ig_tx, f"{pct_s} of clustered")]
 
     if args.usage_assignments:
         rows = read_tsv(args.usage_assignments)

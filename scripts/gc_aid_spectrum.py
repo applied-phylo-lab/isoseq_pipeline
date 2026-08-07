@@ -46,6 +46,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
 import numpy as np
 
 from gc_lib import read_fasta, parse_paf, projected_query
@@ -98,6 +99,32 @@ def main():
     ap.add_argument("--junction-margin", type=int, default=20,
                     help="ignore this many 3' bases, where V(D)J junction "
                          "formation creates differences that are not mutations")
+    ap.add_argument("--transcripts",
+                    help="Transcript FASTA. Enables CLONAL grouping: transcripts "
+                         "are clustered by their VDJ junction (the sequence 3' of "
+                         "the V gene, created once at rearrangement and inherited "
+                         "by every daughter cell), and an inside-tract difference "
+                         "is counted once per CLONE per tract. Without it the "
+                         "fallback is one count per distinct tract, which "
+                         "over-collapses wherever the same tract recurs in "
+                         "independent rearrangements -- as it does throughout "
+                         "blackbird IGL, where transcripts sharing a tract have "
+                         "junctions no more similar than random pairs.")
+    ap.add_argument("--junction-identity", type=float, default=0.95)
+    ap.add_argument("--count-clonal-copies", action="store_true",
+                    help="Count an inside-tract difference once per TRANSCRIPT "
+                         "rather than once per distinct conversion event. This "
+                         "is pseudoreplication and is off by default: clonally "
+                         "expanded transcripts carry the SAME event, so a tract "
+                         "shared by 40 transcripts contributes its 6-9 positions "
+                         "40 times. The permutation null treats each transcript "
+                         "as independent, so the null gets too narrow and the "
+                         "p-value is anti-conservative. In blackbird IGL this "
+                         "inflated inside-tract n from 109 to 779 and turned a "
+                         "non-significant hotspot depletion (x0.89, p=0.73) into "
+                         "x0.54 at p=0.002. The OUTSIDE class is not collapsed: "
+                         "differences there are transcript-specific SHM, and "
+                         "collapsing changes it by under 2%.")
     ap.add_argument("--permutations", type=int, default=1000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out-figure", required=True)
@@ -123,10 +150,12 @@ def main():
             for line in fh:
                 r = dict(zip(hdr, line.rstrip("\n").split("\t")))
                 if r.get("significant") == "True":
-                    tracts[r["transcript"]].append((int(r["start"]), int(r["end"])))
+                    tracts[r["transcript"]].append(
+                        (int(r["start"]), int(r["end"]), r.get("donor", "")))
 
     # best projection per transcript against its own parent
     proj_of = {}
+    best_rec = {}          # the PAF record behind each projection, for junctions
     for rec in parse_paf(args.paf):
         p = parent_of.get(rec.query)
         if p is None or rec.target != p:
@@ -137,13 +166,66 @@ def main():
         prev = proj_of.get(rec.query)
         if prev is None or sum(x is not None for x in pr) > sum(x is not None for x in prev):
             proj_of[rec.query] = pr
+            best_rec[rec.query] = rec
 
     muts = {"inside": [], "outside": []}       # (gene, pos, ref, alt)
     covered_by_gene = defaultdict(set)
+    frames = {"inside": defaultdict(list), "outside": defaultdict(list)}
+    gene_of_tx = {}
     obs_counts = {"inside": defaultdict(int), "outside": defaultdict(int)}
+
+    # ── clonal grouping ──────────────────────────────────────────────────────
+    # Two transcripts are the same clone if they share a parent AND a junction.
+    # The junction is generated once, at rearrangement, so clonal descendants
+    # carry it; independent rearrangements essentially never match.
+    clone_of = {}
+    if args.transcripts:
+        txseq = read_fasta(args.transcripts)
+        junc = {}
+        for tid, rec in best_rec.items():
+            s_ = txseq.get(tid)
+            if not s_:
+                continue
+            seg = (s_[rec.qend:rec.qend + 45] if rec.strand == "+"
+                   else s_[max(0, rec.qstart - 45):rec.qstart])
+            if len(seg) >= 30:
+                junc[tid] = seg
+
+        def ident(a, b):
+            n = min(len(a), len(b))
+            return sum(1 for i in range(n) if a[i] == b[i]) / n if n else 0.0
+
+        reps = defaultdict(list)          # parent -> [(junction, clone_id)]
+        for tid in sorted(junc):
+            par = parent_of.get(tid)
+            hit = None
+            for j, cid in reps[par]:
+                if ident(junc[tid], j) >= args.junction_identity:
+                    hit = cid
+                    break
+            if hit is None:
+                hit = f"{par}|c{len(reps[par])}"
+                reps[par].append((junc[tid], hit))
+            clone_of[tid] = hit
+        n_cl = len(set(clone_of.values()))
+        print(f"{args.locus}: {len(clone_of)} transcripts -> {n_cl} clones",
+              file=sys.stderr)
+
+    seen_events = set()
+    # Which tract each inside position belongs to, per transcript, keyed by span
+    # AND DONOR. Two transcripts can share a span but name different donors --
+    # 4 of 14 IGL groups do -- and those are separate events, so the donor has to
+    # be part of the identity. This also matches how a "distinct tract" is
+    # defined everywhere else in the pipeline: (parent, donor, span).
+    tract_id = defaultdict(set)
+    for tid, ivs in tracts.items():
+        for st, en, donor in ivs:
+            for i in range(st, en + 1):
+                tract_id[(tid, i)].add((st, en, donor))
 
     for tid, proj in proj_of.items():
         gene = parent_of[tid]
+        gene_of_tx[tid] = gene
         gseq = vgenes[gene]
         limit = max(0, len(gseq) - args.junction_margin)
         ivs = tracts.get(tid, [])
@@ -152,9 +234,26 @@ def main():
             if b is None or b == "-" or b not in "ACGT":
                 continue
             covered_by_gene[gene].add(i)
+            # Sampling frame for the strict null: every covered position gets
+            # filed under the class it WOULD belong to, mutated or not, so the
+            # null can redistribute within tracts rather than across the gene.
+            if any(st <= i <= en for st, en, _ in ivs):
+                frames["inside"][tid].append(i)
+            else:
+                frames["outside"][tid].append(i)
             if b == gseq[i]:
                 continue
-            cls = "inside" if any(s <= i <= e for s, e in ivs) else "outside"
+            cls = "inside" if any(st <= i <= en for st, en, _ in ivs) else "outside"
+            if cls == "inside" and not args.count_clonal_copies:
+                # One conversion event = one observation. Key on the event
+                # (parent gene + tract span + position), so clonal copies of the
+                # same tract collapse instead of being counted once per cell.
+                # one observation per CLONE per tract per position
+                ev = (gene, frozenset(tract_id.get((tid, i), ())),
+                      clone_of.get(tid, tid if clone_of else None), i)
+                if ev in seen_events:
+                    continue
+                seen_events.add(ev)
             muts[cls].append((gene, i, gseq[i], b))
             obs_counts[cls][tid] += 1
 
@@ -199,7 +298,39 @@ def main():
                 cgs.append(cg / tot)
         return hots, colds, cgs
 
+    def null_framed(cls, k):
+        """
+        Strict null: keep each transcript's mutations inside the SAME class of
+        positions they were observed in.
+
+        The default null samples anywhere in the gene, which silently asks a
+        different question for the inside-tract class.  Those mutations are
+        confined to a handful of short windows by construction, so if tracts
+        happen to sit where hotspots are scarce, the class looks AID-depleted
+        because of WHERE the tracts are rather than what happened inside them.
+        Restricting the draw to within-tract positions removes that confound --
+        at the cost of power, since a 12 bp tract carrying 6 differences leaves
+        very little room to redistribute.
+        """
+        hots, colds = [], []
+        for _ in range(k):
+            hot = cold = tot = 0
+            for tid, cnt in obs_counts[cls].items():
+                pool = frames[cls].get(tid, [])
+                if not pool:
+                    continue
+                gseq = vgenes[gene_of_tx[tid]]
+                pick = rng.sample(pool, min(cnt, len(pool)))
+                hot += sum(1 for i in pick if is_hotspot(gseq, i))
+                cold += sum(1 for i in pick if is_coldspot(gseq, i))
+                tot += len(pick)
+            if tot:
+                hots.append(hot / tot)
+                colds.append(cold / tot)
+        return hots, colds
+
     results, nulls, nulls_cold, nulls_cg = {}, {}, {}, {}
+    nulls_strict, nulls_cold_strict = {}, {}
     for cls in ("outside", "inside"):
         s = spectrum(muts[cls])
         if s is None:
@@ -207,6 +338,7 @@ def main():
         results[cls] = s
         (nulls[cls], nulls_cold[cls],
          nulls_cg[cls]) = null_motifs(muts[cls], args.permutations)
+        nulls_strict[cls], nulls_cold_strict[cls] = null_framed(cls, args.permutations)
 
     with open(args.out_stats, "w") as fh:
         fh.write("class\tmetric\tvalue\n")
@@ -238,6 +370,18 @@ def main():
             exp_cg = statistics.mean(ng) if ng else float("nan")
             fh.write(f"{cls}\tCG_targeted_fraction\t{s['cg_frac']:.4f}\n")
             fh.write(f"{cls}\tCG_expected\t{exp_cg:.4f}\n")
+            # strict, tract-restricted null (see null_framed)
+            for motif, nl in (("hotspot", nulls_strict[cls]),
+                              ("coldspot", nulls_cold_strict[cls])):
+                if not nl:
+                    continue
+                e = statistics.mean(nl)
+                obs = s[motif]
+                pe = (sum(1 for v in nl if v >= obs) + 1) / (len(nl) + 1)
+                pd = (sum(1 for v in nl if v <= obs) + 1) / (len(nl) + 1)
+                fh.write(f"{cls}\t{motif}_expected_strict\t{e:.4f}\n")
+                fh.write(f"{cls}\t{motif}_enrichment_strict\t{obs/e if e else float('nan'):.3f}\n")
+                fh.write(f"{cls}\t{motif}_p_strict\t{min(1.0, 2*min(pe, pd)):.4g}\n")
             fh.write(f"{cls}\tCG_enrichment\t{s['cg_frac']/exp_cg:.3f}\n")
 
     # ── figure ───────────────────────────────────────────────────────────────
@@ -265,27 +409,44 @@ def main():
     ax = axes[0]
     cases = [(c, m) for c in order for m in ("hotspot", "coldspot")]
     xc = np.arange(len(cases))
-    vals, ps, colours = [], [], []
+    # Bars use the STRICT, tract-restricted null -- the correct frame. The inside
+    # class is confined to short tract windows by construction, so a gene-wide
+    # null silently asks whether those windows sit at hotspots rather than
+    # whether the differences inside them are AID-driven. The gene-wide value is
+    # still drawn as a dashed tick so the two framings can be compared directly.
+    vals, ps, colours, vals_wide = [], [], [], []
     for c, m in cases:
-        nl = nulls[c] if m == "hotspot" else nulls_cold[c]
-        exp = statistics.mean(nl) if nl else float("nan")
+        strict = nulls_strict[c] if m == "hotspot" else nulls_cold_strict[c]
+        wide = nulls[c] if m == "hotspot" else nulls_cold[c]
         obs = results[c][m]
-        vals.append(obs / exp if exp else float("nan"))
+        e_s = statistics.mean(strict) if strict else float("nan")
+        e_w = statistics.mean(wide) if wide else float("nan")
+        vals.append(obs / e_s if e_s else float("nan"))
+        vals_wide.append(obs / e_w if e_w else float("nan"))
         # two-sided: the bar already shows which way the effect goes
-        n = len(nl)
-        up = (sum(1 for v in nl if v >= obs) + 1) / (n + 1)
-        dn = (sum(1 for v in nl if v <= obs) + 1) / (n + 1)
+        n = len(strict)
+        up = (sum(1 for v in strict if v >= obs) + 1) / (n + 1)
+        dn = (sum(1 for v in strict if v <= obs) + 1) / (n + 1)
         ps.append(min(1.0, 2 * min(up, dn)))
         colours.append(cols[c])
     bars = ax.bar(xc, vals, 0.62, color=colours, edgecolor="black", lw=.7)
     for bar, (_, m) in zip(bars, cases):
         if m == "coldspot":
             bar.set_hatch("//")
+    for xi, vw in enumerate(vals_wide):
+        ax.plot([xi - 0.31, xi + 0.31], [vw, vw], color="black", lw=1.5,
+                ls=(0, (2, 1.4)), zorder=4)
     ax.axhline(1.0, color="black", lw=1.2)
     ax.set_yscale("log")
     ax.set_yticks([0.25, 0.5, 1, 2, 4])
     ax.set_yticklabels(["0.25×", "0.5×", "1× (no effect)", "2×", "4×"], fontsize=8)
     for xi, (v, p) in enumerate(zip(vals, ps)):
+        if not (np.isfinite(v) and v > 0):
+            # Too few differences in this class for an expectation to exist.
+            ax.text(xi, 1.0, "no data", ha="center", va="center", fontsize=7,
+                    style="italic", color=NULL_C,
+                    bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none"))
+            continue
         # Uniformly just above the bar top: for a depleted bar that lands in
         # the empty band under the 1x line, which keeps it off the bar itself.
         arrow = "↑" if v > 1 else "↓"
@@ -295,16 +456,19 @@ def main():
     ax.set_xticklabels([f"{m}\n{'outside' if c == 'outside' else 'inside'}"
                         for c, m in cases], fontsize=8)
     lo, hi = min(vals), max(vals)
-    ax.set_ylim(min(lo * 0.45, 0.3), max(hi * 2.6, 3.0))
+    ax.set_ylim(min(lo * 0.45, 0.3), max(hi * 4.0, 4.0))
     ax.set_ylabel("observed / expected", fontsize=9)
     handles = [Patch(facecolor=cols[c], edgecolor="black", label=lbl[c].split("\n")[0])
                for c in order]
     handles += [Patch(facecolor="white", edgecolor="black", label="hotspot WRCY/RGYW"),
                 Patch(facecolor="white", edgecolor="black", hatch="//",
-                      label="coldspot SYC/GRS")]
-    ax.legend(handles=handles, fontsize=6.8, loc="upper right", ncol=2)
-    ax.set_title("A  AID signature — all four cases\n"
-                 "p two-sided; arrow gives the direction",
+                      label="coldspot SYC/GRS"),
+                Line2D([], [], color="black", lw=1.5, ls=(0, (2, 1.4)),
+                       label="gene-wide null")]
+    ax.legend(handles=handles, fontsize=6.2, loc="upper right", ncol=1,
+              framealpha=0.92, borderpad=0.5, handlelength=1.6)
+    ax.set_title("A  SHM leaves AID's footprint · conversion does not\n"
+                 "both AID-initiated; repair differs · tract-restricted null",
                  fontsize=9.5, fontweight="bold", loc="left")
 
     x = np.arange(len(order))

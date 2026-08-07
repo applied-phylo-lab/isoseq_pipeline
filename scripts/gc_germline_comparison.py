@@ -102,6 +102,14 @@ def main():
     ap.add_argument("--min-covered-bp", type=int, default=200)
     ap.add_argument("--used-identity", type=float, default=0.98,
                     help="identity needed to call a gene expression-confirmed")
+    ap.add_argument("--restrict-to",
+                    help="File of transcript IDs, one per line. Scores only "
+                         "these. Used to force every reference in a multi-way "
+                         "comparison onto the SAME transcript set: the coverage "
+                         "floor is applied per reference, so a borderline "
+                         "transcript can clear it against one germline and not "
+                         "another, leaving rows with slightly different n and "
+                         "undermining the claim that only the reference changed.")
     ap.add_argument("--out-figure", required=True)
     ap.add_argument("--out-stats", required=True)
     args = ap.parse_args()
@@ -111,7 +119,12 @@ def main():
                                  args.min_covered_bp)
     best_b = best_per_transcript(args.paf_b, b_seqs, args.junction_margin,
                                  args.min_covered_bp)
-    shared = sorted(set(best_a) & set(best_b))
+    shared = set(best_a) & set(best_b)
+    if args.restrict_to:
+        with open(args.restrict_to) as fh:
+            keep = {ln.strip() for ln in fh if ln.strip()}
+        shared &= keep
+    shared = sorted(shared)
     if not shared:
         raise SystemExit("no transcripts scored against both germline sets")
 

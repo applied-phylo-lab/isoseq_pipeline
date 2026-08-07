@@ -107,12 +107,12 @@ def main():
                      f"{r['used_a']}\t{r['used_b']}\n")
 
     loci = sorted({r["locus"] for r in rows})
-    fig, axes = plt.subplots(1, len(loci) + 1,
-                             figsize=(5.2 * (len(loci) + 1), 4.6))
-    if len(loci) + 1 == 1:
-        axes = [axes]
+    fig, axes = plt.subplots(1, len(loci), figsize=(5.6 * len(loci), 4.6),
+                             squeeze=False)
+    axes = axes[0]
 
-    for ax, locus in zip(axes, loci):
+    titles = []
+    for panel, (ax, locus) in enumerate(zip(axes, loci)):
         sub = [r for r in rows if r["locus"] == locus]
         labels = [r["ref"] for r in sub]
         vals = [r["discord"] for r in sub]
@@ -137,75 +137,37 @@ def main():
                         fontsize=7.5, color=INK, va="top", ha="left")
         ax.set_xlabel("transcripts given a DIFFERENT parent (%)", fontsize=9)
         ax.set_xlim(0, max(vals) * 1.45)
-        ax.set_title(f"{locus} — parent assignment changes",
-                     fontsize=11, fontweight="bold", loc="left",
-                     color=LOCUS.get(locus, INK))
+        # Letter bold, the rest plain, and black rather than the locus colour:
+        # the locus is already named in the title, so colouring it too makes the
+        # heading carry data it does not have.
+        letter = chr(ord("A") + panel)
+        titles.append(r"$\bf{" + letter + r"}$" +
+                      f"  {locus} — parent assignment changes")
+        ax.set_title(titles[-1], fontsize=11, loc="left", color="black")
         for s in ("top", "right"):
             ax.spines[s].set_visible(False)
 
-    ax = axes[-1]
-    # Colour is the ONLY channel carrying locus.  Encoding locus with colour AND
-    # shape, then overriding the colour on the control point, put a blue square
-    # on the plot that matched no legend entry.  Shape now carries the one other
-    # distinction that matters -- whether the reference is the same bird.
-    for r in rows:
-        same = r["same_bird"]
-        ax.scatter(r["gain"], r["discord"],
-                   s=150 if same else 90,
-                   marker="D" if same else "o",
-                   color=LOCUS.get(r["locus"], INK),
-                   edgecolor="black", lw=1.3 if same else .6, zorder=3)
-    # Several references land on top of each other at ~0% identity gain, which is
-    # the substantive point of the panel -- so the labels have to be fanned out
-    # rather than left overlapping.
-    # Displaced labels go DOWN AND LEFT.  Pushing them down-right walks them onto
-    # the next marker in the cluster, which is what hid "b0_pri" behind "b1_pri".
-    used = []
-    for r in sorted(rows, key=lambda r: (-r["gain"], -r["discord"])):
-        dx, dy, ha, step = 6, 5, "left", 0
-        while any(abs(r["gain"] - gx) < 0.13
-                  and abs(r["discord"] + dy / 3.0 - gy) < 2.6
-                  for gx, gy in used):
-            step += 1
-            dy -= 11
-            dx, ha = (-7, "right") if step % 2 else (6, "left")
-        used.append((r["gain"], r["discord"] + dy / 3.0))
-        ax.annotate(r["ref"].replace("bAgePho", "b"),
-                    (r["gain"], r["discord"]), fontsize=6.5, ha=ha,
-                    xytext=(dx, dy), textcoords="offset points")
-    ax.axhline(0, color=GREY, lw=1)
-    ax.axvline(0, color=GREY, lw=1)
-    # Most references cluster at ~0% identity gain, so without a left margin a
-    # displaced label lands on top of the y-axis tick labels.
-    gains = [r["gain"] for r in rows]
-    span = max(max(gains) - min(gains), 0.1)
-    ax.set_xlim(min(gains) - 0.16 * span, max(gains) + 0.12 * span)
-    ax.set_xlabel("median identity gained with matched germline (%)", fontsize=9)
-    ax.set_ylabel("transcripts given a different parent (%)", fontsize=9)
-
-    def handle(marker, colour, label, size=7, lw=.6):
-        return Line2D([], [], marker=marker, linestyle="none", markersize=size,
-                      color=colour, markeredgecolor="black",
-                      markeredgewidth=lw, label=label)
-
-    locus_leg = ax.legend(
-        handles=[handle("o", LOCUS.get(l, INK), l) for l in loci],
-        fontsize=8, title="locus", title_fontsize=8, loc="upper left")
-    ax.add_artist(locus_leg)
-    ax.legend(handles=[handle("o", GREY_DARK, "different bird"),
-                       handle("D", GREY_DARK, "same bird, other haplotype",
-                              size=8, lw=1.3)],
-              fontsize=8, title="reference", title_fontsize=8, loc="lower right")
-    ax.set_title("identity barely moves,\nparent assignment does",
-                 fontsize=11, fontweight="bold", loc="left")
-    for s in ("top", "right"):
-        ax.spines[s].set_visible(False)
-
-    fig.suptitle("Effect of the germline reference on what you infer "
-                 f"(all references scored against {args.matched_label}, "
-                 "identical transcripts throughout)",
-                 fontsize=12.5, fontweight="bold", y=1.03)
     fig.tight_layout()
+
+    # Push each title out to the visual left edge of its panel. loc="left" aligns
+    # to the AXES BOX, but the reference names on the y-axis are long (one runs to
+    # "bAgePho2_alt  (same bird, other haplotype)") and sit outside that box, so
+    # the heading ends up looking centred over the panel. Measuring the rendered
+    # tick labels and aligning to the leftmost of them handles both panels without
+    # hard-coding an offset per panel.
+    # set_title(x=...) sticks; Text.set_x() alone does not, because matplotlib
+    # re-applies the loc-based position on every draw.
+    fig.canvas.draw()
+    rend = fig.canvas.get_renderer()
+    for ax, title in zip(axes, titles):
+        labs = [t for t in ax.get_yticklabels() if t.get_text()]
+        if not labs:
+            continue
+        box = ax.get_window_extent(rend)
+        left = min(t.get_window_extent(rend).x0 for t in labs)
+        ax.set_title(title, fontsize=11, loc="left", color="black",
+                     x=(left - box.x0) / box.width)
+
     save_figure(fig, args.out_figure)
 
     print(f"{len(rows)} comparisons written to {args.out_table}", file=sys.stderr)

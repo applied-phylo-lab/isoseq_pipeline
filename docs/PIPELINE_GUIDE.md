@@ -192,12 +192,19 @@ have:
 
 | m ≥ | IGL tracts | IGL inside hotspot | IGH tracts | IGH inside hotspot |
 |---|---|---|---|---|
-| 4 | 556 | **1.26** ✗ | 513 | **1.45** ✗ |
-| 5 | 123 | 0.48 ✓ | 99 | 1.07 ✗ |
-| 6 | 93 | 0.40 ✓ | 42 | 0.88 ✓ |
-| 8 | 19 | 0.00 ✓ | 10 | 0.84 ✓ |
+| 4 | 556 | 0.96 | 513 | 1.29 |
+| 5 | 123 | 0.89 | 99 | 1.12 |
+| 6 | 93 | 0.92 | 42 | 0.91 |
+| 7 | 36 | 0.90 | 15 | 0.72 |
 
-**Chosen: m ≥ 5 for IGL, m ≥ 6 for IGH.** The loci differ because their donor
+Recomputed after the clonal-copy fix. An earlier version of this sweep counted
+clonal copies and put IGL m ≥ 4 at ×1.26, which is what originally ruled it out.
+It should not have.
+
+**Chosen: m ≥ 5 for IGL, m ≥ 6 for IGH.** The permutation null already licenses
+m ≥ 4 in both; these are the conservative choice, and the outside/inside contrast
+is stable across m = 4–7 (outside 2.13–2.39, inside 0.72–1.29), so the conclusion
+does not rest on where in that range the line falls. The loci differ because their donor
 pools differ (23 vs 162 genes) — the same logic Bonferroni was reaching for,
 calibrated empirically instead of analytically. Against the old rule this is a
 real relaxation: **IGH 10 → 28 tracts, IGL 93 → 122**, with no loss of
@@ -226,6 +233,44 @@ topology control reports from the other direction.
 This is the test that actually separates the two processes, and it does not depend
 on the donor pool at all.
 
+#### What the motif names mean
+
+They are not acronyms — each letter is an **IUPAC ambiguity code** standing for a
+set of allowed bases:
+
+| Code | Bases | Mnemonic |
+|---|---|---|
+| **W** | A or T | *weak* — 2 hydrogen bonds |
+| **S** | G or C | *strong* — 3 hydrogen bonds |
+| **R** | A or G | pu*r*ine |
+| **Y** | C or T | p*y*rimidine |
+
+AID deaminates **cytosine → uracil** in single-stranded DNA, and it prefers
+certain neighbours. The targeted base is the C (or, read on the other strand,
+the G):
+
+| Motif | Expansion | Mutated base |
+|---|---|---|
+| **WRCY** | `[AT] [AG] C [CT]` | the **C**, 3rd position |
+| **RGYW** | `[AG] G [CT] [AT]` | the **G**, 2nd position |
+| **SYC** | `[GC] [CT] C` | the **C**, 3rd position |
+| **GRS** | `G [AG] [GC]` | the **G**, 1st position |
+
+Each pair is one motif seen from two strands: **RGYW is the reverse complement
+of WRCY**, and **GRS is the reverse complement of SYC**. Because transcription
+exposes both strands as single-stranded DNA, AID can hit either, so both spellings
+have to be counted. Concretely, `AACT` is a WRCY hit and `AGTT` is the same site
+read the other way.
+
+So a hotspot and a coldspot are both statements about a C:G pair — one where AID
+is likely to strike, one where it is not. That is exactly why moving the two in
+**opposite** directions is specific to AID, while anything that merely clusters
+mutations would move both the same way.
+
+*Variants in the literature:* some papers write the hotspot as WRCH / DGYW
+(H = A/C/T, D = A/G/T), which is slightly broader. This pipeline uses the
+classic WRCY / RGYW definition throughout.
+
 **Somatic hypermutation** is done by AID, which is not random: it targets WRCY /
 RGYW motifs (hotspots) **and avoids** SYC / GRS (coldspots). **Gene conversion**
 copies a block of donor sequence — the resulting differences sit wherever the
@@ -239,19 +284,179 @@ the prediction is directional in each:
 
 |  | hotspot (WRCY/RGYW) | coldspot (SYC/GRS) |
 |---|---|---|
-| **IGL outside tracts** | ×2.23 ↑ (p = 0.002) | ×0.40 ↓ (p = 0.002) |
-| **IGL inside tracts** | ×0.48 ↓ (p = 0.002) | ×1.55 ↑ (p = 0.002) |
-| **IGH outside tracts** | ×2.18 ↑ (p = 0.002) | ×0.51 ↓ (p = 0.002) |
-| **IGH inside tracts** | ×0.91 (n.s.) | ×0.69 (p = 0.084) |
+| **IGL outside tracts** | ×2.24 ↑ (p = 0.002) | ×0.40 ↓ (p = 0.002) |
+| **IGL inside tracts** | ×0.55 ↓ (p = 0.002) | ×1.47 ↑ (p = 0.002) |
+| **IGH outside tracts** | ×2.23 ↑ (p = 0.002) | ×0.51 ↓ (p = 0.002) |
+| **IGH inside tracts** | ×0.78 (n.s.) | ×1.68 ↑ (p = 0.014) |
+
+> **Counting unit: one observation per CLONE per tract**, clones defined by
+> shared VDJ junction. See *The clonality test* below — the choice is not a
+> convention, it is measured, and getting it wrong in either direction changes
+> the result.
+
+
+These are against the **tract-restricted null**, which is what panel A plots; the
+gene-wide value is drawn on each bar as a dashed tick for comparison.
 
 Outside-tract differences carry a textbook AID signature in both loci — enriched
-at hotspots *and* depleted at coldspots. Inside-tract differences do not; in IGL
-they run the other way entirely, which is a stronger result than mere absence.
+at hotspots **and** depleted at coldspots, both at the permutation floor.
+Inside-tract differences do not: in IGL they run the other way, depleted at
+hotspots and enriched at coldspots. That is the prediction for a difference
+copied from a donor — it sits wherever the donor happened to differ, unrelated to
+where AID bound.
 
 The null redistributes each transcript's mutations at random over the positions
 actually covered in that same gene, keeping the count fixed (1000 permutations).
 This controls for base composition, without which raw motif percentages are
 meaningless.
+
+#### The clonality test — what counts as one observation
+
+Every enrichment in the AID test is a fraction over *differences*, so it depends
+on deciding what an independent observation is. A conversion tract carried by 40
+transcripts is **one** event if those transcripts are clonal descendants of a
+single converted B cell, and **forty** events if they are independent
+rearrangements that each acquired the same tract. Counting the first case forty
+times is pseudoreplication and makes the permutation null far too narrow;
+collapsing the second case to one throws away real replication. Both errors are
+large, and they point in opposite directions.
+
+This is decidable rather than assumable. The **VDJ junction** — the N-nucleotide
+region immediately 3′ of the V gene — is generated once, at rearrangement, and is
+inherited by every daughter cell. Clonal relatives share it; independent
+rearrangements essentially never do.
+
+**Method.** Take the 45 bp immediately 3′ of the V alignment end for each
+transcript (5′ of the start, for minus-strand alignments), then greedily cluster
+transcripts within a parent gene at ≥95% junction identity. An inside-tract
+difference is counted **once per clone per tract**.
+
+**Result — the two loci differ, and it matters:**
+
+| | junction identity, transcripts sharing a tract | random pairs | transcripts → clones |
+|---|---|---|---|
+| **IGL** | median 0.267, 1% ≥95% | median 0.267, 0% ≥95% | 520 → 396 |
+| **IGH** | median 0.722, **50% ≥95%** | median 0.267, 1% ≥95% | 68 → 54 |
+
+In IGL, transcripts sharing a tract are **no more related than random pairs**.
+They are independent rearrangements carrying the same conversion — *recurrent*
+conversion, which is what a locus with one functional gene and a preferred set of
+donors should produce. The inside class therefore barely shrinks (779 → 712) and
+the result stands. In IGH they are substantially clonal, and collapsing changes
+the numbers (inside hotspot ×0.61 → ×0.78, no longer approaching significance).
+
+**Why this was worth doing.** An intermediate version of this analysis collapsed
+to one observation per *tract* regardless of clonality. That over-corrected
+badly: IGL's inside class fell to 92 differences and a real effect
+(hotspot ×0.55, p = 0.002) disappeared into a null result (×0.90, p = 0.77).
+Getting the counting unit wrong in either direction changes the conclusion.
+
+**A second control, same question.** Recurrent tracts could also be explained if
+the "tract" were simply an allele — the parent gene's other-haplotype version
+appearing in transcripts from that chromosome. It is not: of 20 distinct IGL
+tracts, **0** have their donor-diagnostic bases present in `bAgePho2_alt`, the
+same bird's second haplotype. (This is the failure mode that sank the duck
+comparison, so it is worth checking explicitly.)
+
+Flags: `--transcripts` enables clone-aware counting; omitting it falls back to
+one observation per tract; `--count-clonal-copies` disables collapsing entirely.
+
+#### The two nulls, in one paragraph
+
+> Both nulls ask the same question — do the differences land on AID motifs more or
+> less often than chance? They differ in what "chance" means: which positions a
+> difference **could** have occupied.
+>
+> - **Gene-wide:** anywhere in the V gene.
+> - **Strict:** only within the same region it was actually found in — a
+>   tract-internal difference stays inside its own tract window, an outside
+>   difference stays outside.
+>
+> Only the strict version matches the background composition of the region being
+> tested.
+
+In one line: *gene-wide uses the whole gene as the background; strict uses the
+background of the specific region each difference came from.*
+
+Note that **both** nulls are computed for **both** classes — strict is not "the
+inside one". It reframes the outside class too; it simply changes almost nothing
+there, because outside positions are ~95% of the gene (255 of 258 covered
+positions in IGL).
+
+This matters when tract windows are compositionally unusual. In IGH they are —
+**1.5× hotspot-rich and 2.4× coldspot-poor** relative to the gene average —
+because AID targets the sites where conversion initiates. Using the whole gene as
+background there compares inside-tract differences against composition they never
+experienced, which flipped the coldspot result from ×0.69 to ×1.66. In IGL the
+tract windows are compositionally ordinary, so both nulls agree. The two nulls
+diverge **only** where the composition differs, which is what makes this an
+explanation rather than a rationalisation.
+
+#### Exactly how the p-values are computed
+
+**1. Collect.** Each transcript is projected onto its parent's coordinates. For
+every covered position `i` (excluding the last 20 bp), record whether the
+transcript differs from the parent, and classify the difference `inside` or
+`outside` according to whether `i` falls in one of that transcript's tract
+intervals. The motif is always evaluated on the **parent germline sequence** at
+`i`, not on the transcript — the question is whether AID would have targeted that
+site, which depends on the DNA it acted on.
+
+**2. Observed statistic.** `hotspot_fraction = (differences at hotspot positions)
+/ (all differences in that class)`, and likewise for coldspots. A raw fraction is
+meaningless on its own, because motif density varies between genes and along a
+gene — hence step 3.
+
+**3. Null distribution (1000 replicates).** The mutation *count* is held fixed and
+the *positions* are resampled without replacement. Two framings are computed:
+
+| Null | Sampling frame | Controls for |
+|---|---|---|
+| **gene-wide** (default) | for each gene, draw that gene's mutation count from all covered positions in it | gene-to-gene composition and how many mutations each gene contributed |
+| **tract-restricted** (strict) | for each transcript, draw its inside-tract count from that transcript's *within-tract* positions, and its outside count from its outside positions | additionally, **where the tracts sit** |
+
+The strict null exists because the gene-wide one quietly asks the wrong question
+of the inside class: those differences are confined to a few short windows by
+construction, so if tracts happen to land where hotspots are scarce, the class
+would look AID-depleted because of *where the tracts are* rather than what
+happened inside them. This matters here — most IGL events cluster at V:137–149.
+
+**4. p-value.** Empirical, with the standard +1 correction (Davison & Hinkley):
+
+```
+p_enriched = (#{null >= observed} + 1) / (n_perm + 1)
+p_depleted = (#{null <= observed} + 1) / (n_perm + 1)
+p_two_sided = min(1, 2 * min(p_enriched, p_depleted))
+```
+
+The +1 stops a p-value of exactly zero, which no finite permutation set can
+justify. **With 1000 permutations the smallest achievable two-sided p is
+0.002** — that is a resolution floor, not a coincidence, and it is why every
+strong result in these tables reads `p = 0.002`. A smaller number would require
+more permutations, not better data.
+
+**5. Enrichment** = observed / mean(null).
+
+#### Does the tract-restriction change the answer? No.
+
+| | gene-wide | tract-restricted |
+|---|---|---|
+| IGL outside hotspot | ×2.23 | ×2.24 |
+| IGL outside coldspot | ×0.40 | ×0.40 |
+| IGL inside hotspot | ×0.48 | ×0.54 |
+| IGL inside coldspot | ×1.56 | ×1.47 |
+| IGH outside hotspot | ×2.18 | ×2.23 |
+| IGH outside coldspot | ×0.51 | ×0.51 |
+| IGH inside hotspot | ×0.90 (n.s.) | ×0.61 (p = 0.09) |
+| IGH inside coldspot | ×0.69 (n.s.) | **×1.66 (p = 0.004)** |
+
+The outside class is untouched, as expected — it covers most of the gene either
+way. The inside class moves, and it moves *toward* the predicted pattern: under
+the correct frame IGH inside-tract differences are significantly **enriched** at
+coldspots, the same anti-AID mirror IGL shows. The gene-wide null had been
+diluting that signal, not manufacturing it.
+
+Both nulls are written to `{locus}_aid_spectrum.tsv` (`*_strict` suffixes).
 
 **Circularity check:** if the tract detector were simply picking non-hotspot
 positions by construction, this would be an artifact. It isn't — donor-difference
@@ -292,6 +497,93 @@ test cannot fail.
 ---
 
 ## Figure guide
+
+### `FIG_main_gene_conversion.pdf` — the summary figure
+
+One page carrying the whole argument. Built by `scripts/gc_main_figure.py`.
+
+| Panel | What it establishes |
+|---|---|
+| **A** | IGH architecture — 162 V genes, only 25 with an RSS, 35 expressed |
+| **B** | IGL architecture — 23 V genes, only **2** with an RSS, 1 functional parent |
+| **C** | Raw sequence evidence. The heading counts the **whole dataset** (39 distinct tracts from 150 transcript-level calls; IGH 19/28, IGL 20/122) but only **six rows are drawn** — the three best-supported per locus, ranked by donor-diagnostic positions. It is an illustrative subset, deliberately the strongest cases, tagged IGH/IGL and listed IGH-then-IGL to match panels A and B. Gene ids are omitted: the row identity is the point, not which pseudogene it was. Where parent and donor agree the transcript base carries no information, so it takes the same neutral tone as those rows; only the three informative outcomes (follows donor / follows parent / follows neither) get their own colour |
+| **D** | IGL donor→parent network: 10 of 22 possible pairs, **0/122 impossible** |
+| **E** | Mutation spectrum, all four cases, both loci, against the tract-restricted null. Hotspots are drawn solid and coldspots as a lighter weight of the same locus colour — they are the same measurement on the same locus, so a second texture would imply a second variable |
+
+The argument runs A→B (almost nothing can rearrange, so diversity cannot come
+from combinatorial V use), then **C** (here are the actual events, as sequence),
+then D (every part of the array feeds the one gene that can, and never from a
+donor recombination had removed), then E (the differences inside those blocks do
+not carry AID's targeting footprint, while those outside do — which is what makes
+them conversion rather than hypermutation).
+
+**C deliberately precedes D and E.** Both of those panels talk about tracts, and
+E in particular contrasts differences *inside* versus *outside* one. Those words
+mean nothing until the reader has seen a tract, so the sequence panel comes
+first.
+
+**Panels A and B.** Stem *height* is the transcript count on a **log** axis,
+normalised by a `vmax` **shared between the two panels**. Sharing it is what
+makes A and B comparable at all: the same stem height means the same number of
+transcripts in both, so IGH's ceiling of 7 is visibly nowhere near IGL's 233
+rather than being rescaled to fill its own panel. The two rows are also sized in
+proportion to their axis ranges, so a given count occupies the same number of
+millimetres in each — without that, a shared `vmax` would still draw the same
+count at different sizes.
+
+Both panels carry the **same tick values** (1, 5, 10, 50, 200, as far as each
+reaches), labelled on **both strands**; the lower half previously had gridlines
+but no numbers. Since log compresses exactly the difference the panel is being
+asked to show, the top genes additionally carry their **count as a printed
+label**. Stem *direction* is strand. A navy dot at the stem tip marks an RSS.
+
+IGL gets a shorter row because it has a single minus-strand gene, so a symmetric
+axis would spend half the panel on empty space.
+
+The position axis is in **kb below a megabase and Mb above** — IGH reads 10–80 kb,
+IGL 6.315–6.337 Mb. Raw base pairs gave either six-digit ticks or a detached
+`1e6` offset in the corner, both harder to read than the number itself. The two
+panels are different contigs, so there is nothing to compare between their
+absolute coordinates and no reason to force one unit on both. The same rule now
+applies to the locus maps in `IG_overview.pdf`.
+
+A gene with **no transcripts** is drawn as a small open circle sitting *on* the
+zero line, nudged just far enough above or below it to show which strand it is
+on. The offset is kept well under `height(1)` (≈0.13 on the shared scale) — at
+the earlier 0.115 a silent gene was drawn level with the "1" tick and read as
+having one transcript, which is exactly the thing it does not have. A marker
+rather than a stem, because marker size is in points and so survives whatever the
+log axis does to the low end. In panel A the J gene is 140 kb beyond the V array, so
+the axis breaks (`//`) rather than compressing every gene into the left third.
+
+**Panel C.** Every gene gets the same large ringed marker — navy filled if it has
+an RSS, white if not — and there are no position labels. Size previously encoded
+expression, which made the donor-only genes (the entire subject of the panel) the
+hardest things on it to see; the only distinction kept is the one the panel is
+about, namely which gene can be rearranged at all.
+
+> **Panel D is not "AID vs not AID".** AID initiates *both* processes — it makes
+> the same lesion either way. What differs is the repair:
+>
+> - **SHM** — the lesion is resolved by error-prone repair *at that base*, so the
+>   resulting mutations pile onto AID's target motifs.
+> - **Gene conversion** — the lesion is resolved by copying a donor, so the
+>   resulting differences sit wherever the donor happened to differ from the
+>   parent, which has nothing to do with where AID bound.
+>
+> So the panel contrasts **SHM against gene conversion**, and what it detects is
+> the *footprint of AID targeting* in the outcome, not the presence or absence of
+> AID. Labelling it "not AID" would misstate the biology.
+
+**Panel D.** Coldspots are drawn as a lighter weight of the same locus colour
+rather than a hatch: they are the same measurement on the same locus, so a second
+texture would imply a second variable. The significance key lists only the levels
+that actually occur in the figure — here `***` and `n.s.` — since describing a
+`*` that appears nowhere sends the reader hunting for it.
+
+There is deliberately **no overall title** — that belongs in the manuscript text —
+and every panel title is black, including the two locus panels, so colour is not
+doing double duty as both a locus code and a heading style.
 
 ### `IG_overview.pdf` — start here
 
@@ -383,7 +675,7 @@ support the hypothesis — see below.
 
 | Panel | What it shows |
 |---|---|
-| **A** | All four cases: {hotspot, coldspot} × {outside, inside}, as fold-change against the permutation null, on a log axis so enrichment and depletion are symmetric about 1× |
+| **A** | All four cases: {hotspot, coldspot} × {outside, inside}, as fold-change against the **tract-restricted** permutation null, on a log axis so enrichment and depletion are symmetric about 1×. A dashed tick on each bar marks where the gene-wide null would have put it |
 | **B** | Transition bias — **confounded, not evidence** |
 | **C** | C:G targeting — **no signal against the correct baseline** |
 | **D** | Full substitution spectrum (descriptive) |
@@ -482,6 +774,14 @@ was opaque):
 The supplemental figure making the case that matched germline data is necessary.
 Five haplotypes, the same transcripts throughout, all scored against `bAgePho2_pri`.
 
+All rows use **exactly the same transcripts** (IGL n = 520, IGH n = 69). That is
+enforced with `--restrict-to`, not assumed: the 200 bp coverage floor is applied
+per reference, so a borderline transcript can clear it against one germline and
+fall under it against another. Before this was fixed the IGL rows ran 521/521/520,
+which is harmless arithmetically but contradicts the figure's own claim that only
+the reference changed. The comparison is now run on the intersection across every
+reference.
+
 The design point is the **control**: `bAgePho2_alt` is the *same bird's other
 haplotype*. Without some such baseline a discordance rate means nothing, because
 you cannot separate "wrong bird" from "no two assemblies ever agree perfectly".
@@ -510,13 +810,14 @@ penalty larger than the subtraction implies.
 
 | Reference | Locus | Different parent | Median identity gain |
 |---|---|---|---|
-| bAgePho1_pri | IGH | 74.3% | +1.32% |
+| bAgePho1_pri | IGH | 75.4% | +1.35% |
 | bAgePho1_alt | IGH | 52.2% | +0.88% |
-| bAgePho0_pri | IGH | 42.2% | +1.24% |
+| bAgePho0_pri | IGH | 43.5% | +1.24% |
 | bAgePho1_alt | IGL | 31.1% | +0.00% |
-| bAgePho0_pri | IGL | 30.3% | +0.00% |
-| bAgePho1_pri | IGL | 29.9% | +0.15% |
+| bAgePho0_pri | IGL | 30.4% | +0.00% |
+| bAgePho1_pri | IGL | 30.0% | +0.15% |
 | **bAgePho2_alt** | IGL | **21.5%** | +0.00% | ← same bird, other haplotype |
+
 
 The result to quote: in IGL the haploid-reference floor is 21.5%, and the
 different-bird references sit at 29.9–31.1% — roughly **9 points of excess
@@ -525,11 +826,10 @@ itself partly real biology. And the third panel is the warning:
 median identity gain is **0.00%** for IGL. No summary statistic would have told
 you anything was wrong. The sequences look fine; the *assignments* are wrong.
 
-The third panel encodes locus with **colour only** (IGH blue, IGL green); marker
-shape says whether the reference is the same bird (diamond) or a different one
-(circle). An earlier version used both colour *and* shape for locus and then
-overrode the colour on the control point, which put a blue square on the plot that
-matched nothing in the legend.
+The identity-gain scatter that used to sit alongside these two panels has been
+removed — it restated what the bar panels and the table already say. The numbers
+are still in `SUPP_reference_choice_across_haplotypes.tsv`
+(`median_identity_gain_pct`), which is where that comparison belongs.
 
 > These five haplotypes went through the **reference-swap comparison only** — the
 > transcripts were re-aligned to each haplotype's V genes and re-scored. They were
@@ -553,6 +853,127 @@ doubtful: `rank_comparison_plot` shows directly whether the top gene actually be
 the second one or whether they are effectively tied.
 
 ---
+
+## Second species: tufted duck
+
+The same stage-2 analysis and the same figures were run on a tufted duck IsoSeq
+dataset (`/local/storage/kav67/tufted_duck/results/geneconv/`), config
+`config_geneconv_tufted_duck.yaml`.
+
+**Stage 1 was not re-run** — it was already complete for all six SRR accessions
+and nothing in it changed. `skera` does not apply at all: this is plain
+Sequel-era IsoSeq, not a Kinnex array, so there is no concatenated array to
+split. Because that dataset clustered directly without the IG prescreen,
+`--prefilter-stats` is now optional in `gc_overview.py` and the funnel simply
+starts at the clustered transcripts.
+
+Three things had to be decided for this dataset rather than inherited:
+
+* **Pooling.** The six runs are 4–484 IG transcripts each and split by locus
+  (SRR13570364 is 92% IGH, SRR13570377 is 90% IGL). Transcript IDs already carry
+  their accession, so the PAFs concatenate without collision: 483 IGH + 283 IGL.
+* **The strict transcript set, not the merged one.** `merge_stats` reports
+  `in_both = 0` for every run — immunotools ran with different sequence IDs, so
+  its 46k calls cannot be reconciled with minimap2's 484 and their "union" is
+  meaningless.
+* **Recalibrated thresholds.** The blackbird's m ≥ 5/6 left only 2 IGH and 4 IGL
+  tracts here. Permutation gives FDR ≈ 0 from m ≥ 4 in both duck loci, and the
+  AID check agrees, so m = 4.
+
+### Finding J: a mistake worth not repeating
+
+The IGH J was first placed at ~157 kb by blasting the **whole** post-V portion of
+each transcript against the contig. That is wrong: the post-V region contains
+D + J + the entire constant region, and the constant region is far longer, so it
+dominates the hits. Those 157 kb hits averaged **293 bp beginning 52 bp after the
+V end** — an exon downstream of the real J.
+
+The correct test is to blast **only the first ~70 bp after the V end**, which
+isolates D+J. That gives 206 hits at 188.6–189.5 kb with a mean length of 37 bp,
+i.e. J-sized, and translation of that region carries the canonical IGHJ
+C-terminus `...GSIDLWGHGTEVTVS...` (cf. human IGHJ4 `WGQGTLVTVSS`) on the minus
+strand, with a `CACAGTG` heptamer upstream. **J is at ~188,668 (−).**
+
+The blackbird IGL J was checked the same way and is confirmed: 567 junction-only
+hits at 6,339 kb, mean length 39 bp, matching the position already in use.
+
+### What reproduced, and what did not
+
+| | duck | blackbird |
+|---|---|---|
+| IGL V genes with an RSS | **15/51** | 2/23 |
+| IGH V genes with an RSS | 7/60 | 25/162 |
+| IGL outside-tract hotspot | ×1.12 (n.s.) | ×2.24 *** |
+| IGH outside-tract hotspot | ×1.48 *** | ×2.23 *** |
+| inside-tract hotspot | 0.83 / 0.83 | 0.61 / 0.54 |
+
+The **direction** reproduces — outside-tract differences hotspot-enriched,
+inside-tract ones not — but far more weakly, and duck IGL does not reach
+significance. Two contributors worth stating.
+
+First, the duck IGL architecture is genuinely different: 15 candidate parents,
+not one.
+
+Second, the **sample provenance**. Checking Mueller *et al.* 2021
+(GigaScience 10:giab081) directly: the assembly DNA and the Iso-Seq RNA come from
+the *same cohort* — ten captive-bred ducks (5 female, 5 male, 12 months) sampled
+in one dissection, with the assembly DNA taken from "lung tissue of a female
+tufted duck" among them. So this is **not** the different-individual case, and an
+earlier version of this guide said so wrongly.
+
+It is not a clean matched-individual design either. Iso-Seq was run once per
+*tissue* (six runs: brain, ileum, lung, ovary, spleen, testis), drawn from that
+ten-bird cohort, and both ovary and testis appear, so at least one male and one
+female contributed. The methods state only that "technical replicates were
+pooled" and never say whether RNA was pooled across individuals within a tissue.
+Either way the transcripts originate from up to ten animals and are scored
+against one haploid reference.
+
+That is a *different* confound from the blackbird's, and arguably a worse one for
+this particular test: between-individual germline polymorphism is not
+AID-targeted, so it adds hotspot-neutral differences to the outside-tract class
+and dilutes exactly the enrichment being measured. It is a plausible contributor
+to duck IGL sitting at ×1.12 where the blackbird reaches ×2.24. Consistent with
+the reference-choice supplement, it is invisible in identity: duck IGL sits at
+0.947 against the blackbird's 0.951.
+
+**Duck IGH gives 104/104 tracts impossible.** The J was then searched for
+exhaustively, because the alternative reading would contradict the standard
+post-rearrangement model: a junction-only blast across the whole 294.8 kb contig
+gives one cluster (206 hits at 188.6 kb) and nothing above the V array; a
+six-frame scan of the entire contig on both strands for the full IGHJ C-terminus
+`W-G-x-G-T-x-[VLIAM]-T-V-[SA]` returns **exactly one hit**, at 188,649 (−); and
+blasting that J against the whole genome returns only itself. There is no J on
+the plus strand and none above the V cluster.
+
+**Assembly error is ruled out.** `bAytFul3.1` (GCA_976225485.1, 2025, a different
+individual) places D and J on the same side of the V array. Two independent
+assemblies agree, so the J-distal functional gene is real geometry.
+
+**But the tracts look like germline polymorphism, not conversion.** Mapping runs
+to tissues via the paper's Table 2 subread counts gives ovary, lung, ileum, brain,
+testis, spleen — and ovary/testis are sex-specific, so at least two birds
+contributed. The IGH result is essentially **one tissue**: 103 of 104 tract calls
+come from the ileum run, which supplies 145 of the 154 IGH transcripts analysed.
+And **all 60 distinct IGH tracts are private to a single run**; none recurs in
+another tissue. IGL is the same — 28 distinct tracts, 0 shared.
+
+That is the signature of germline variation. Under somatic conversion onto a
+shared germline, individual tracts would be transcript-private but the
+donor→parent *pairs* would recur across tissues, because every bird carries the
+same donor array. Nothing recurring at all fits transcripts from different birds
+each carrying their own alleles, scored against the single assembly female.
+
+So this is **not** evidence for conversion before rearrangement. Ranked:
+(1) transcripts carry other birds' germline alleles; (2) donor attribution is
+wrong, as the topology control concluded for blackbird IGH; (3) genuine
+pre-rearrangement conversion — possible, least supported, not separable here. The two expressed RSS-bearing
+parents sit at 229,918 and 230,950, the far end of the array from J, so a
+deletional rearrangement there removes every donor. Setting `j_strand: "+"` would
+make that number look good by reclassifying them as inversional, but the WGxG
+evidence does not support it. The honest reading is that duck IGH donor
+attribution is untrustworthy — the same verdict the topology control reached for
+blackbird IGH.
 
 ## Colour conventions
 
