@@ -43,10 +43,12 @@ arc width is proportional to the number of supporting tracts. Filled navy, RSS
 present; open, RSS absent. Ten of the 22 possible donor → parent pairs are
 observed, all converging on the single functional gene at the J-proximal end of
 the array. None of the 122 IGL tracts uses a donor that the rearrangement had
-already removed; note, however, that because the functional gene lies at the
-J-proximal end no donor is ever deleted in IGL, so this check has no
-discriminating power in this locus (it does in IGH, where 8 of 28 tracts have no
-topologically possible donor).
+already removed. This check has no discriminating power in IGL, however, because
+the functional gene lies at the J-proximal end and so no donor is ever deleted;
+nor does it in IGH, where no J has been located and the deletion/inversion
+assignment therefore rests on the D cluster's orientation — testing both J strands
+gives a false-discovery rate of ≈1 either way, i.e. IGH donor assignment carries
+no topological signal. No IGH result depending on that labelling is quoted.
 
 **(E)** Mutation spectrum inside versus outside called tracts, both loci. Bars
 give the observed fraction of differences falling at AID hotspot (WRCY/RGYW) or

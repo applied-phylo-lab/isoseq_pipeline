@@ -61,6 +61,35 @@ loci:
     # J not located; the anchor and orientation come from the D cluster and the
     # inference documented above. j_pos is set beyond the D cluster only so the
     # "J is above the V array" geometry is expressed correctly.
+    # ── J STRAND IS AN ASSUMPTION HERE, AND IT WAS TESTED ────────────────────
+    # No J has been located for blackbird IGH (see the header). The SIDE is not
+    # in doubt: the D cluster at 216.4-218.9 kb lies above the V array
+    # (11.8-77.9 kb), and D must sit between V and J, so J is above V whichever
+    # strand the locus reads. Only the STRAND is inferred, from the D cluster's
+    # heptamer orientation.
+    #
+    # Both strands were run through the topology control, which is the only
+    # independent check available. Swapping the strand exactly swaps the
+    # mechanism labels (92 deletional / 70 inversional becomes 70 / 92), so the
+    # two hypotheses are genuinely distinguishable in principle. They are not
+    # distinguishable in this data:
+    #
+    #   m>=   j_strand "+"        j_strand "-"
+    #    4    FDR 0.82            FDR 0.91
+    #    5    FDR 1.11            FDR 0.88
+    #    6    FDR 1.22            FDR 0.91
+    #    8    FDR 2.78            FDR 0.92     (FDR = f/e, see docs)
+    #
+    # FDR ~ 1 under BOTH means the impossible fraction simply tracks the expected
+    # fraction: IGH donor assignment carries no topological signal at all, so the
+    # control has nothing to discriminate with. This is the same verdict reached
+    # for IGH by every other route.
+    #
+    # CONSEQUENCE: no IGH result that depends on the deletion/inversion labelling
+    # should be quoted. The count of tracts with no topologically possible donor
+    # is 8/28 under "+" and 13/28 under "-" -- the number is an artefact of the
+    # assumption, not a measurement. The AID spectrum, which is the primary
+    # evidence, does not use the donor pool and is unaffected.
     j_pos: 219000
     j_strand: "+"
     d_anchor_pos: 216424

@@ -310,6 +310,39 @@ actually covered in that same gene, keeping the count fixed (1000 permutations).
 This controls for base composition, without which raw motif percentages are
 meaningless.
 
+#### The J strand in IGH is an assumption — and it was tested both ways
+
+No J has been located for blackbird IGH. The **side** is not in doubt: the D
+cluster (216.4–218.9 kb) sits above the V array (11.8–77.9 kb), and D must lie
+between V and J, so J is above V whichever strand the locus reads. Only the
+**strand** is inferred, from the D cluster's heptamer orientation (16/24 canonical
+`CAC` on `+` against 8/24 on `−`).
+
+That matters because strand is what assigns deletion versus inversion, and
+swapping it exactly swaps the labels — 92 deletional / 70 inversional becomes
+70 / 92. So the two hypotheses are distinguishable in principle. Running both
+through the topology control:
+
+| m ≥ | `j_strand "+"` | `j_strand "−"` |
+|---|---|---|
+| 4 | FDR 0.82 | FDR 0.91 |
+| 5 | FDR 1.11 | FDR 0.88 |
+| 6 | FDR 1.22 | FDR 0.91 |
+| 8 | FDR 2.78 | FDR 0.92 |
+
+**FDR ≈ 1 under both.** The impossible fraction simply tracks the expected
+fraction, meaning IGH donor assignment carries no topological signal for the
+control to work with. The test cannot choose a strand, and that failure is itself
+the finding — it agrees with every other route by which IGH donor attribution has
+turned out to be unreliable.
+
+**Consequence:** no IGH result that depends on the deletion/inversion labelling
+should be quoted. The count of tracts with no topologically possible donor is
+8/28 under `+` and 13/28 under `−` — an artefact of the assumption, not a
+measurement. The AID spectrum, which is the primary evidence, never touches the
+donor pool and is unaffected. IGL is unaffected too: its J is directly located and
+confirmed (567 junction-only hits at 6,339 kb).
+
 #### The clonality test — what counts as one observation
 
 Every enrichment in the AID test is a fraction over *differences*, so it depends
@@ -507,7 +540,7 @@ One page carrying the whole argument. Built by `scripts/gc_main_figure.py`.
 | **A** | IGH architecture — 162 V genes, only 25 with an RSS, 35 expressed |
 | **B** | IGL architecture — 23 V genes, only **2** with an RSS, 1 functional parent |
 | **C** | Raw sequence evidence. The heading counts the **whole dataset** (39 distinct tracts from 150 transcript-level calls; IGH 19/28, IGL 20/122) but only **six rows are drawn** — the three best-supported per locus, ranked by donor-diagnostic positions. It is an illustrative subset, deliberately the strongest cases, tagged IGH/IGL and listed IGH-then-IGL to match panels A and B. Gene ids are omitted: the row identity is the point, not which pseudogene it was. Where parent and donor agree the transcript base carries no information, so it takes the same neutral tone as those rows; only the three informative outcomes (follows donor / follows parent / follows neither) get their own colour |
-| **D** | IGL donor→parent network: 10 of 22 possible pairs, **0/122 impossible** |
+| **D** | IGL donor→parent network: 10 of 22 possible pairs, **0/122 impossible**. `--network-extra` adds further loci as stacked rows in the same slot (the duck figure uses it for IGH), which shifts the AID panel's letter accordingly |
 | **E** | Mutation spectrum, all four cases, both loci, against the tract-restricted null. Hotspots are drawn solid and coldspots as a lighter weight of the same locus colour — they are the same measurement on the same locus, so a second texture would imply a second variable |
 
 The argument runs A→B (almost nothing can rearrange, so diversity cannot come
@@ -600,6 +633,71 @@ G and H are the ones to look at first — they show the whole architecture at on
 where the rearrangeable genes are, which way they point, and which ones the
 repertoire actually draws on.
 
+### `SUPP_IGH_donor_network.pdf` — blackbird IGH network, stripped down
+
+The same detector output as `IGH_arrows_detector.pdf`, drawn for a supplement:
+gene positions removed from the x axis, a one-line title, and **every arrow the
+same width** so the figure says *which* genes exchange sequence rather than how
+often. Gene colour still carries the only distinction the panel is about — navy
+if the gene has an RSS and can be rearranged, grey if it can only donate. `--only-involved-genes` restricts the track to genes that appear as a donor or a
+parent — 31 of 162 in blackbird IGH — which is what makes the remaining markers
+legible at full size. The count is stated in the title. Markers are still sized
+from the spacing available, so the option and the sizing work together rather
+than fighting.
+
+Built with `--hide-gene-labels --uniform-arrows --uniform-gene-size
+--short-title --compact`.
+
+> **Why `--compact` flattens the arcs rather than shortening the canvas.**
+> `arc3` is evaluated in **display** coordinates: the apex sits `rad × chord / 2`
+> *pixels* above the axis, so whether an arc fits depends on the panel's aspect
+> ratio and not at all on `ylim`. A full-width chord at `rad 0.42` needs an axes
+> height of `0.42 × width`; at 15 × 5.4 in that is 6.3 in against ~4 in
+> available, which is why arcs ran into the title and legend. Compact mode
+> therefore drops `rad` to 0.36 at a shorter 15 × 5.4 in canvas. The main figure's network panels go further and
+> **measure** the drawn panel, clamping `rad` so the longest chord still lands
+> inside — a fixed value cannot work there, because the panels differ in width
+> and in whether arcs run one way or both. This is also why *widening* a network
+> panel makes overflow worse rather than better.
+
+**What each colour means, and which side it sits on.** Exactly **one arc is
+drawn per event**, and its colour says how the sequence evidence and the
+topology agree:
+
+| colour | meaning | arc runs from | side |
+|---|---|---|---|
+| **teal** | the best-matching donor is one the rearrangement left intact | that donor | above |
+| **grey** | the best-matching donor was deleted, but another donor could have supplied the tract | **that other, surviving donor** | above |
+| **rose** | every candidate donor had been deleted | the best-matching (deleted) donor | below |
+
+Teal and grey are both relationships that *could have happened*, which is why
+they share the upper half; the difference is only whether the gene the sequence
+matched best is the gene the topology permits. Rose is the one case with no
+possible explanation at all, and it gets the lower half to itself. A grey arc is
+therefore a weaker claim than a teal one — the event is real, but the donor named
+is the fallback rather than the best match — and never an impossible one.
+
+Because the arc for a grey event is redrawn *from the surviving donor*, an
+illegal donor is never rendered when a legal alternative exists: drawing it would
+assert a relationship that could not have occurred. If a grey pair already
+appears as a teal call from some other event the grey copy is skipped (the two
+arcs would be identical), and the legend then drops the grey entry rather than
+promising an arrow the reader cannot find.
+
+**Keeping every arc visible.** `arc3` curvature is applied in *display* space, so
+an arc's apex sits `rad × chord / 2` **pixels** off the axis — independent of
+`ylim`. Both scripts therefore measure the drawn panel and clamp `rad` so the
+longest chord still lands inside, and the main figure clamps each side against
+the height that side will actually be given (the axis opens asymmetrically when
+only one side carries arcs, so a single long rose arc must not flatten every teal
+one).
+
+The main-figure networks draw the **J gene** as a teal diamond at whichever end
+it sits. Without it the duck IGH panel showed an unexplained fan of red: J lies
+below that V array while the only expressed parents sit at the far end, so a
+deletional rearrangement removes every donor between. J is what makes the colour
+legible.
+
 ### `IGx_arrows_*.pdf` — donor → recipient
 
 The figure asked for: genes laid out along the locus, one arrow per donor→recipient
@@ -608,17 +706,18 @@ relationship, labelled with the number of supporting transcripts.
 - **Arrow direction**: donor → recipient.
 - **Arrow thickness and its number**: transcripts supporting that pair. The number
   now sits directly on its own arc (see note below).
-- **Above the axis / teal**: the best donor that survived the rearrangement.
-- **Grey**: a competing donor for the *same* tract — an alternative explanation
-  of one event, not a second event.
+- **Above the axis / teal**: the best-matching donor survived the rearrangement.
+- **Above the axis / grey**: the best-matching donor was deleted, but another
+  donor could have supplied the tract — the arc is drawn **from that surviving
+  donor**, so it is still a possible relationship, just not the best-matching one.
 - **Below the axis / rose**: **impossible** — *every* candidate donor for that
   tract had been deleted. This is the visible false-positive load.
 
 > **The colour rule is per tract, not per donor.** If any legal donor can explain
-> a tract, the tract is drawn teal and all other candidates grey — including a
-> better-supported illegal one. The event is real; we just cannot say which gene
-> supplied it, and a possible explanation exists. Red is reserved for tracts with
-> *no* legal explanation at all.
+> a tract, that tract is never counted as impossible — even when a
+> better-supported donor for it was deleted. The event is real; we just cannot
+> say for certain which gene supplied it. Rose is reserved for tracts with *no*
+> legal explanation at all.
 >
 > This matters a great deal for BrepConvert, which lists ~15 donors per event.
 > Marking it wrong for every impossible donor it happens to mention — even when

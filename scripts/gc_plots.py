@@ -62,8 +62,19 @@ def short(name):
 # ─── figure 1: donor -> recipient arcs along the locus ────────────────────────
 
 def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
-                  usage=None, min_count=1, label_top=14):
+                  usage=None, min_count=1, label_top=14,
+                  hide_gene_labels=False, uniform_arrows=False,
+                  short_title=False, compact=False, uniform_gene_size=False,
+                  only_involved=False):
     order = sorted(pool, key=lambda g: int(pool[g]["pos"]))
+    if only_involved:
+        # A 162-gene array leaves ~6 pt per marker, most of them uninvolved.
+        # Keeping only the genes that appear as a donor or a parent frees enough
+        # room to draw the rest properly. Order is still genomic, so the layout
+        # still reads left-to-right along the locus.
+        keep = {t["parent"] for t in tracts if t.get("significant") == "True"}
+        keep |= {t["donor"] for t in tracts if t.get("significant") == "True"}
+        order = [g for g in order if g in keep] or order
     xof = {g: i for i, g in enumerate(order)}
     positions = [int(pool[g]["pos"]) for g in order]
 
@@ -106,9 +117,9 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
         regions[(t.get("transcript"), t.get("start"), t.get("end"), p)].append(
             (d, t["donor_allowed"] == "True", m))
 
-    pairs = Counter()
-    alt_pairs = Counter()
-    allowed_flag = {}
+    pairs = Counter()          # top donor is allowed            -> teal, above
+    alt_pairs = Counter()      # top donor illegal, legal fallback -> grey, above
+    imp_pairs = Counter()      # no allowed donor at all           -> rose, below
     n_regions = len(regions)
     n_amb = n_impossible_regions = 0
     for (_, _, _, p), cands in regions.items():
@@ -117,22 +128,23 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
         for d, ok, m in cands:
             if d not in best_by_donor or m > best_by_donor[d][1]:
                 best_by_donor[d] = (ok, m)
+        top_d, (top_ok, _m) = max(best_by_donor.items(),
+                                  key=lambda kv: (kv[1][1], kv[0]))
         legal = [(d, m) for d, (ok, m) in best_by_donor.items() if ok]
-        if len(best_by_donor) > 1:
+        if top_ok:
+            pairs[(top_d, p)] += 1
+        elif legal:
+            # The best-supported donor was deleted, but another donor could have
+            # supplied the tract. Draw THAT one -- the relationship is possible,
+            # just not the one the sequence matched best. Grey marks the fallback.
+            fb = max(legal, key=lambda t: (t[1], t[0]))[0]
+            alt_pairs[(fb, p)] += 1
             n_amb += 1
-        if legal:
-            chosen = max(legal, key=lambda t: (t[1], t[0]))[0]
         else:
-            chosen = max(best_by_donor.items(), key=lambda kv: (kv[1][1], kv[0]))[0]
+            imp_pairs[(top_d, p)] += 1
             n_impossible_regions += 1
-        pairs[(chosen, p)] += 1
-        allowed_flag[(chosen, p)] = bool(legal)
-        for d in best_by_donor:
-            if d != chosen:
-                alt_pairs[(d, p)] += 1
-                allowed_flag.setdefault((d, p), True)
 
-    fig, ax = plt.subplots(figsize=(15, 8.5))
+    fig, ax = plt.subplots(figsize=(15, 5.4) if compact else (15, 8.5))
 
     # Gene track. Colour encodes RSS state -- whether the gene can be rearranged
     # at all -- and marker size encodes whether it is expressed. Those are two
@@ -153,6 +165,8 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
     # -> inversion (everything is retained).
     # J sits at one end of the array; a deletional gene is drawn pointing toward
     # it, an inversional gene away from it.
+    gene_ms = min(12.0, max(3.2, 0.70 * fig.get_figwidth() * 72 * 0.92
+                            / max(1, len(order))))
     j_dir = "left" if j_pos < min(positions) else "right"
     for g in order:
         x = xof[g]
@@ -167,10 +181,23 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
             mk = ">" if j_dir == "left" else "<"
         else:
             mk = "o"
-        ax.plot([x], [0], marker=mk, ms=13 if expressed else 7.5,
-                color=gene_colour(g),
-                markeredgecolor="black" if expressed else "none",
-                markeredgewidth=1.4, zorder=5)
+        # uniform_gene_size drops expression from the figure entirely, leaving
+        # colour (RSS) and shape (orientation) as the only gene channels. The
+        # marker is sized from the space actually available per gene -- 162 IGH
+        # genes across 15 in leaves ~6 pt each, so a fixed 10 pt marker would
+        # overlap its neighbours and read as a solid band.
+        if uniform_gene_size:
+            # No outline once the marker is small: at 4 pt a 0.7 pt black edge
+            # is most of the glyph, and 162 of them read as a dirty smear rather
+            # than as genes.
+            ax.plot([x], [0], marker=mk, ms=gene_ms, color=gene_colour(g),
+                    markeredgecolor="black" if gene_ms >= 7 else "none",
+                    markeredgewidth=0.7, zorder=5)
+        else:
+            ax.plot([x], [0], marker=mk, ms=13 if expressed else 7.5,
+                    color=gene_colour(g),
+                    markeredgecolor="black" if expressed else "none",
+                    markeredgewidth=1.4, zorder=5)
     ax.axhline(0, color="black", lw=1.2, zorder=1)
 
     # J marker at whichever end it sits
@@ -181,43 +208,70 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
                 xytext=(0, -34), ha="center", fontsize=10, color=SEGMENT["J"],
                 fontweight="bold")
 
-    maxc = max(pairs.values()) if pairs else 1
-    top = {k for k, _ in pairs.most_common(label_top)}
+    maxc = max(list(pairs.values()) + list(imp_pairs.values()) + [1])
+    top = {k for k, _ in (pairs + imp_pairs).most_common(label_top)}
 
-    # Alternatives first, so a contested arc never hides the call it competes
-    # with.  They carry no label and no arrowhead weight -- they are context.
+    RAD = 0.36 if compact else 0.42
+    # arc3 applies its curvature in DISPLAY space: an arc's apex sits
+    # rad x chord/2 PIXELS off the chord, so how far an arc reaches up depends on
+    # the panel's aspect ratio and not at all on ylim. Measure the widest chord
+    # that will actually be drawn and shrink the curvature until even that one
+    # fits in the half-panel available to it -- otherwise the long arcs, which
+    # are exactly the interesting ones, run off the top and vanish.
+    ax.set_xlim(-2.4, len(order) + 1.4)
+    fig.canvas.draw()
+    bb = ax.get_window_extent()
+    spans = [abs(xof[d] - xof[q])
+             for d, q in list(pairs) + list(alt_pairs) + list(imp_pairs)]
+    if spans:
+        xr = ax.get_xlim()[1] - ax.get_xlim()[0]
+        chord_px = bb.width * max(spans) / xr
+        if chord_px > 0:
+            # 0.72 of the half-height, leaving room for the count labels that
+            # sit on the arcs and the annotation line above them.
+            RAD = min(RAD, 0.72 * bb.height / chord_px)
+
+    # Greys first so a fallback never hides the call it stands in for. Both teal
+    # and grey are ALLOWED relationships and sit above the axis; only the rose
+    # arcs, where no allowed donor exists at all, go below.
+    drawn_alt = 0
     for (d, p), c in alt_pairs.items():
         if (d, p) in pairs:
-            continue                      # already drawn as somebody's primary
+            continue                      # already drawn as a top-donor call
+        drawn_alt += c
         x0, x1 = xof[d], xof[p]
-        sign = 1 if allowed_flag[(d, p)] else -1
         travel = 1 if x1 > x0 else -1
         ax.add_patch(FancyArrowPatch(
             (x0, 0), (x1, 0),
-            connectionstyle=f"arc3,rad={-0.42 * sign * travel}",
-            arrowstyle="-|>", mutation_scale=8, lw=0.6,
-            color=GREY_DARK, alpha=0.32, zorder=2))
+            connectionstyle=f"arc3,rad={-RAD * travel}",
+            arrowstyle="-|>", mutation_scale=10, lw=1.4,
+            color=GREY_DARK, alpha=0.7, zorder=2))
 
     n_allowed = n_impossible = 0
     labels = []
-    for (d, p), c in sorted(pairs.items(), key=lambda kv: kv[1]):
+    drawn = ([((d, p), c, True) for (d, p), c in pairs.items()]
+             + [((d, p), c, False) for (d, p), c in imp_pairs.items()])
+    for (d, p), c, ok in sorted(drawn, key=lambda t: t[1]):
         if c < min_count:
             continue
-        ok = allowed_flag[(d, p)]
         n_allowed += c if ok else 0
         n_impossible += 0 if ok else c
         x0, x1 = xof[d], xof[p]
         sign = 1 if ok else -1
-        lw = 0.7 + 3.6 * (c / maxc)
+        # With uniform_arrows the width no longer encodes the number of
+        # supporting tracts -- every relationship is drawn identically, so the
+        # figure says only WHICH genes exchange sequence, not how often.
+        lw = 1.1 if uniform_arrows else 0.7 + 3.6 * (c / maxc)
         # arc3's curvature is relative to the direction of travel, so the sign
         # has to be flipped for right-to-left arcs or "possible" and
         # "impossible" end up on the same side of the axis.
         travel = 1 if x1 > x0 else -1
-        rad = -0.42 * sign * travel
+        rad = -RAD * sign * travel
         arrow = FancyArrowPatch(
             (x0, 0), (x1, 0),
             connectionstyle=f"arc3,rad={rad}",
-            arrowstyle="-|>", mutation_scale=11 + 7 * (c / maxc),
+            arrowstyle="-|>",
+            mutation_scale=11 if uniform_arrows else 11 + 7 * (c / maxc),
             lw=lw, color=ALLOWED_C if ok else IMPOSSIBLE_C,
             alpha=0.75, zorder=3,
         )
@@ -227,17 +281,22 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
 
     # With ~130 genes every label cannot be legible; show every Nth and keep
     # minor ticks for the rest so positions stay readable.
-    step = 1 if len(order) <= 40 else (2 if len(order) <= 70 else 4)
-    ax.set_xticks(range(0, len(order), step))
-    ax.set_xticklabels([short(order[i]) for i in range(0, len(order), step)],
-                       rotation=90, fontsize=8 if step == 1 else 6)
-    ax.set_xticks(range(len(order)), minor=True)
+    if hide_gene_labels:
+        ax.set_xticks([])
+    else:
+        step = 1 if len(order) <= 40 else (2 if len(order) <= 70 else 4)
+        ax.set_xticks(range(0, len(order), step))
+        ax.set_xticklabels([short(order[i]) for i in range(0, len(order), step)],
+                           rotation=90, fontsize=8 if step == 1 else 6)
+        ax.set_xticks(range(len(order)), minor=True)
     ax.set_yticks([])
     for s in ("left", "right", "top"):
         ax.spines[s].set_visible(False)
     ax.spines["bottom"].set_visible(False)
     ax.set_xlim(-2.4, len(order) + 1.4)
-    lim = 1.55
+    # The arcs never exceed ~1.0; the extra headroom exists only for the count
+    # labels, which compact mode drops along with everything else decorative.
+    lim = 1.12 if compact else 1.55
     ax.set_ylim(-lim, lim)
 
     # ── arc labels ────────────────────────────────────────────────────────────
@@ -280,12 +339,14 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
                     bbox=dict(boxstyle="round,pad=0.16", fc="white",
                               ec="none", alpha=0.88), zorder=7)
 
-    ax.text(0.5, 0.965,
-            "donor → recipient, arc respects recombination topology",
-            transform=ax.transAxes, ha="center", fontsize=10, color=ALLOWED_C)
-    ax.text(0.5, 0.035,
+    ax.text(0.5, 0.985 if compact else 0.965,
+            "donor → recipient, a donor the rearrangement left intact",
+            transform=ax.transAxes, ha="center",
+            fontsize=9 if compact else 10, color=ALLOWED_C)
+    ax.text(0.5, 0.015 if compact else 0.035,
             "donor was DELETED by the rearrangement — impossible",
-            transform=ax.transAxes, ha="center", fontsize=10, color=IMPOSSIBLE_C)
+            transform=ax.transAxes, ha="center",
+            fontsize=9 if compact else 10, color=IMPOSSIBLE_C)
 
     # Counted per REGION (one event = one call), not per donor listed.
     tot = n_regions
@@ -296,14 +357,21 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
     # imply a filter that was never applied.
     scored = any(t.get("p_corrected", "NA") not in ("NA", "") for t in tracts)
     what = "significant tracts" if scored else "donor-calls, no significance filter"
-    amb = (f"   ·   {n_amb}/{n_regions} ({n_amb/n_regions:.0%}) have a competing "
-           f"donor (grey)" if n_regions and n_amb else "")
-    ax.set_title(
-        f"{locus} — gene conversion donor→recipient relationships "
-        f"({tot} distinct tracts){amb}\n"
-        f"{n_impossible}/{tot} = {frac:.0%} have NO topologically possible "
-        f"donor — recombination had deleted every candidate",
-        fontsize=13, fontweight="bold", pad=16)
+    amb = (f"   ·   {n_amb}/{n_regions} ({n_amb/n_regions:.0%}) fall back to a "
+           f"second, possible donor (grey)" if n_regions and drawn_alt else "")
+    if short_title:
+        sel = (f"; {len(order)} genes used as donor or parent"
+               if only_involved else "")
+        ax.set_title(f"{locus} — donor → parent relationships "
+                     f"({tot} tracts, {n_impossible}/{tot} with no possible "
+                     f"donor{sel})", fontsize=12, fontweight="bold", pad=6)
+    else:
+        ax.set_title(
+            f"{locus} — gene conversion donor→recipient relationships "
+            f"({tot} distinct tracts){amb}\n"
+            f"{n_impossible}/{tot} = {frac:.0%} have NO topologically possible "
+            f"donor — recombination had deleted every candidate",
+            fontsize=13, fontweight="bold", pad=16)
 
     # Line2D handles rather than Patch, so the legend shows the real marker
     # sizes -- size is a data channel here and a coloured square cannot show it.
@@ -335,21 +403,24 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
         return Line2D([], [], marker=mk, linestyle="none", markersize=10,
                       color="#777777", markeredgecolor="none", label=label)
 
-    handles = [spacer("$\\bf{gene\\ colour}$")] + colour_handles + [
-        spacer("$\\bf{orientation\\ vs\\ J}$"),
-        tri("<" if j_dir == "left" else ">", "same as J → deletion"),
-        tri(">" if j_dir == "left" else "<", "opposite → inversion"),
+    size_block = [] if uniform_gene_size else [
         spacer("$\\bf{gene\\ size}$"),
         # neutral fill, not white: a white dot on a white legend is invisible
         dot("#dddddd", 11, "black", "≥1 transcript best-matches it"),
         dot("#dddddd", 6.5, "#777777", "no transcript best-matches it"),
-        spacer("$\\bf{arrow\\ colour}$"),
-        Patch(facecolor=ALLOWED_C, label="best donor that survived"),
-        Patch(facecolor=IMPOSSIBLE_C, label="EVERY candidate was deleted"),
     ]
-    if alt_pairs:
-        handles.append(Patch(facecolor=GREY_DARK, alpha=0.45,
-                             label="competing donor (incl. deleted ones)"))
+    handles = [spacer("$\\bf{gene\\ colour}$")] + colour_handles + [
+        spacer("$\\bf{orientation\\ vs\\ J}$"),
+        tri("<" if j_dir == "left" else ">", "same as J → deletion"),
+        tri(">" if j_dir == "left" else "<", "opposite → inversion"),
+    ] + size_block + [
+        spacer("$\\bf{arrow\\ colour}$"),
+        Patch(facecolor=ALLOWED_C, label="best-matching donor is possible"),
+    ]
+    if drawn_alt:
+        handles.append(Patch(facecolor=GREY_DARK, alpha=0.7,
+                             label="best match impossible, this one is not"))
+    handles.append(Patch(facecolor=IMPOSSIBLE_C, label="no possible donor"))
     # matplotlib fills legend columns top-to-bottom, so the four blocks only line
     # up under their own headings when every block is the same height. Pad to the
     # tallest rather than letting an extra entry shunt the next heading upwards.
@@ -362,11 +433,14 @@ def donor_network(tracts, pool, genes, locus, j_pos, out, rss=None,
     blocks.append(cur)
     tallest = max(len(b) for b in blocks)
     handles = [h for b in blocks for h in (b + [spacer("")] * (tallest - len(b)))]
-    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.30),
-              ncol=len(blocks), fontsize=9, framealpha=0.95, borderpad=0.9,
+    ax.legend(handles=handles, loc="upper center",
+              bbox_to_anchor=(0.5, -0.06 if compact else -0.30),
+              ncol=len(blocks), fontsize=9, framealpha=0.95,
+              borderpad=0.5 if compact else 0.9,
               columnspacing=1.8, handletextpad=0.7)
 
-    ax.set_xlabel("V gene (contig position, ordered; J-proximal end nearest J marker)",
+    ax.set_xlabel("" if hide_gene_labels else
+                  "V gene (contig position, ordered; J-proximal end nearest J marker)",
                   fontsize=10)
     save_figure(fig, out)
     plt.close(fig)
@@ -576,6 +650,20 @@ def main():
                          "transcripts for RSS-bearing candidate parents -- so a "
                          "donor-only gene can never be drawn as expressed and the "
                          "size channel silently becomes a restatement of colour.")
+    ap.add_argument("--hide-gene-labels", action="store_true",
+                    help="drop the per-gene position ticks along the x axis")
+    ap.add_argument("--uniform-arrows", action="store_true",
+                    help="draw every arrow the same width, so the figure shows "
+                         "which genes exchange sequence rather than how often")
+    ap.add_argument("--uniform-gene-size", action="store_true",
+                    help="drop the expression channel: every gene marker the "
+                         "same size, leaving colour (RSS) and shape (orientation)")
+    ap.add_argument("--only-involved-genes", action="store_true",
+                    help="draw only the genes that appear as a donor or a "
+                         "parent, so the remaining markers can be legible")
+    ap.add_argument("--short-title", action="store_true")
+    ap.add_argument("--compact", action="store_true",
+                    help="tighten the vertical extent and pull the legend up")
     ap.add_argument("--out-network", required=True)
     ap.add_argument("--out-report", required=True)
     ap.add_argument("--out-matrix", help="Donor x parent matrix figure")
@@ -603,7 +691,13 @@ def main():
     topo = read_tsv(args.topology) if args.topology else []
 
     tot, bad = donor_network(tracts, pool, genes, args.locus, args.j_pos,
-                             args.out_network, rss=rss, usage=usage)
+                             args.out_network, rss=rss, usage=usage,
+                             hide_gene_labels=args.hide_gene_labels,
+                             uniform_arrows=args.uniform_arrows,
+                             short_title=args.short_title,
+                             compact=args.compact,
+                             uniform_gene_size=args.uniform_gene_size,
+                             only_involved=args.only_involved_genes)
     report(tracts, pool, genes, arch, topo, args.locus, args.out_report)
     if args.out_matrix:
         if donor_matrix(tracts, pool, genes, args.locus, args.j_pos,

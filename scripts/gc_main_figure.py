@@ -39,7 +39,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.gridspec import GridSpec
+from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 from matplotlib.ticker import FuncFormatter
 from matplotlib.lines import Line2D
 from matplotlib.patches import ConnectionStyle, FancyArrowPatch, Patch, Rectangle
@@ -263,7 +263,12 @@ def panel_architecture(ax, genes, locus, j_pos, usage, letter, vmax, ylim):
 
 # ─── B: donor network ────────────────────────────────────────────────────────
 
-def panel_network(ax, tracts, pool, usage, rssmap, locus, letter, title_x=0.0):
+def panel_network(ax, tracts, pool, usage, rssmap, locus, letter, title_x=0.0,
+                  rad=0.30, j_pos=None):
+    """rad is the arc curvature. arc3 is built in DISPLAY space, so the apex sits
+    rad*chord/2 PIXELS above the axis: whether an arc fits depends on the panel's
+    aspect ratio, not on ylim, and widening a panel makes overflow WORSE. A panel
+    of width W needs height >= rad*W for a full-span arc to stay inside."""
     order = sorted(pool, key=lambda g: int(pool[g]["pos"]))
     xof = {g: i for i, g in enumerate(order)}
 
@@ -274,47 +279,143 @@ def panel_network(ax, tracts, pool, usage, rssmap, locus, letter, title_x=0.0):
         p, d = t["parent"], t["donor"]
         if p not in xof or d not in xof:
             continue
+        try:
+            m = int(t.get("n_support", 1) or 1)
+        except ValueError:
+            m = 1
         regions[(t["transcript"], t["start"], t["end"], p)].append(
-            (d, t["donor_allowed"] == "True"))
+            (d, t["donor_allowed"] == "True", m))
 
-    pairs, impossible = Counter(), 0
+    # One arc per event, coloured by what the topology allows.
+    #
+    #   blue  -- the BEST-matching donor is one the rearrangement left intact.
+    #   grey  -- the best-matching donor was deleted, but another donor could
+    #            have supplied the tract; the arc is drawn from THAT donor, so a
+    #            grey arc is still a relationship that could have happened, just
+    #            not the one the sequence matched best.
+    #   red   -- every candidate donor had been deleted; no arc here is possible.
+    #
+    # Blue and grey are both allowed and sit above the axis; only red goes below.
+    # Grouping them that way is what makes the panel readable in duck IGH, where
+    # 51 of 51 events have no surviving donor at all.
+    pairs, alt_pairs, imp_pairs = Counter(), Counter(), Counter()
+    impossible = 0
     for (_, _, _, p), cands in regions.items():
-        legal = [d for d, ok in cands if ok]
-        chosen = legal[0] if legal else cands[0][0]
-        if not legal:
+        best_by_donor = {}
+        for d, ok, m in cands:
+            if d not in best_by_donor or m > best_by_donor[d][1]:
+                best_by_donor[d] = (ok, m)
+        top_d, (top_ok, _m) = max(best_by_donor.items(),
+                                  key=lambda kv: (kv[1][1], kv[0]))
+        legal = [(d, m) for d, (ok, m) in best_by_donor.items() if ok]
+        if top_ok:
+            pairs[(top_d, p)] += 1
+        elif legal:
+            alt_pairs[(max(legal, key=lambda t: (t[1], t[0]))[0], p)] += 1
+        else:
+            imp_pairs[(top_d, p)] += 1
             impossible += 1
-        pairs[(chosen, p)] += 1
 
-    maxc = max(pairs.values()) if pairs else 1
-    for (d, p), c in sorted(pairs.items(), key=lambda kv: kv[1]):
+    # Fit the curvature to the panel instead of guessing it. arc3's apex is
+    # rad*chord/2 PIXELS above the axis, so an arc fits only if the total arc
+    # extent is under the panel height -- a constraint on the panel's ASPECT that
+    # no ylim can relax, and that gets harder as the panel gets wider. Measure
+    # the drawn panel and clamp rad so the longest chord still lands inside.
+    # Both channels decide which way the axis has to open.
+    any_up = bool(pairs) or bool(alt_pairs)
+    any_dn = bool(imp_pairs)
+    up_spans = [abs(xof[d] - xof[p]) for d, p in list(pairs) + list(alt_pairs)]
+    dn_spans = [abs(xof[d] - xof[p]) for d, p in imp_pairs]
+    if any_up or any_dn:
+        ax.set_xlim(-1.0, len(order) + 0.2)
+        ax.figure.canvas.draw()
+        bb = ax.get_window_extent()
+        xr = ax.get_xlim()[1] - ax.get_xlim()[0]
+        # The axis opens asymmetrically when only one side carries arcs, so each
+        # side is clamped against the height it will actually be given rather
+        # than against a shared worst case -- otherwise a single long red arc
+        # flattens every blue one along with it.
+        share_up = 1.35 / ((1.35 if any_dn else 0.30) + 1.35) if any_up else 0
+        share_dn = 1.35 / (1.35 + (1.35 if any_up else 0.30)) if any_dn else 0
+        caps = []
+        for spans, share in ((up_spans, share_up), (dn_spans, share_dn)):
+            if not spans or not share:
+                continue
+            chord_px = bb.width * max(spans) / xr
+            if chord_px > 0:
+                caps.append(1.70 * share * bb.height / chord_px)
+        if caps:
+            rad = min(rad, min(caps))
+
+    # Greys first, so a fallback never hides the call it stands in for.
+    for (d, p), c in alt_pairs.items():
+        if (d, p) in pairs:
+            continue
         x0, x1 = xof[d], xof[p]
         travel = 1 if x1 > x0 else -1
         ax.add_patch(FancyArrowPatch(
-            (x0, 0), (x1, 0), connectionstyle=f"arc3,rad={-0.40 * travel}",
+            (x0, 0), (x1, 0),
+            connectionstyle=f"arc3,rad={-rad * travel}",
+            arrowstyle="-|>", mutation_scale=8, lw=1.3,
+            color=GREY_DARK, alpha=0.65, zorder=2))
+
+    maxc = max(list(pairs.values()) + list(imp_pairs.values()) + [1])
+    drawn = ([((d, p), c, True) for (d, p), c in pairs.items()]
+             + [((d, p), c, False) for (d, p), c in imp_pairs.items()])
+    for (d, p), c, ok in sorted(drawn, key=lambda t: t[1]):
+        x0, x1 = xof[d], xof[p]
+        sign = 1 if ok else -1
+        travel = 1 if x1 > x0 else -1
+        ax.add_patch(FancyArrowPatch(
+            (x0, 0), (x1, 0),
+            connectionstyle=f"arc3,rad={-rad * sign * travel}",
             arrowstyle="-|>", mutation_scale=9 + 6 * (c / maxc),
-            lw=0.6 + 3.0 * (c / maxc), color=DONOR_C, alpha=0.72, zorder=3))
+            lw=0.6 + 3.0 * (c / maxc),
+            color=DONOR_C if ok else OTHER_C, alpha=0.72, zorder=3))
 
     # Every gene gets the same large ringed marker. Size previously encoded
     # expression, which made the donor-only genes -- the whole subject of this
     # panel -- the hardest things on it to see. The only distinction kept is the
     # one the panel is about: which gene can be rearranged at all.
+    # Sized from the space available per gene rather than fixed: IGH packs 60
+    # genes where IGL has 23, and one marker size cannot suit both.
+    w_pt = ax.get_window_extent().width / ax.figure.dpi * 72
+    ms = min(11.0, max(3.2, 0.70 * w_pt / max(1, len(order))))
     for g in order:
         rss = rssmap.get(g, {}).get("rss_state") == "rss_present"
-        ax.plot([xof[g]], [0], marker="o", ms=11,
+        ax.plot([xof[g]], [0], marker="o", ms=ms,
                 color=SEGMENT["V"] if rss else "white",
-                markeredgecolor="black", markeredgewidth=1.2, zorder=5)
+                markeredgecolor="black", markeredgewidth=min(1.2, ms / 9),
+                zorder=5)
     ax.axhline(0, color="black", lw=1.1, zorder=1)
 
-    ax.set_xlim(-1.0, len(order) + 0.2)
-    ax.set_ylim(-0.30, 1.35)
+    # J anchors the whole topology: a parent far from J deletes everything
+    # between, which is exactly why one locus can be all-red. Leaving it off made
+    # the red fan look unexplained.
+    jx = None
+    if j_pos is not None:
+        pos = [int(pool[g]["pos"]) for g in order]
+        jx = -0.9 if j_pos < min(pos) else len(order) + 0.1
+        ax.plot([jx], [0], marker="D", ms=8, color=SEGMENT["J"], zorder=6,
+                clip_on=False)
+        ax.annotate("J", (jx, 0), textcoords="offset points", xytext=(0, -11),
+                    ha="center", va="top", fontsize=8,
+                    color=SEGMENT["J"], fontweight="bold")
+
+    ax.set_xlim(-1.6 if jx is not None and jx < 0 else -1.0,
+                len(order) + (0.9 if jx is not None and jx > 0 else 0.2))
+    ax.set_ylim(-1.35 if any_dn else -0.30, 1.35 if any_up else 0.30)
     ax.set_xticks([])
     ax.set_yticks([])
     for s in ("left", "right", "top", "bottom"):
         ax.spines[s].set_visible(False)
 
     n_possible = len(order) - 1
+    imp = (f" · {impossible}/{len(regions)} with no possible donor"
+           if impossible else "")
     ax.set_title(f"{L(letter)}  {locus} donor → parent network\n"
-                 f"{len(pairs)} of {n_possible} possible pairs",
+                 f"{len(set(pairs) | set(alt_pairs) | set(imp_pairs))} of "
+                 f"{n_possible} possible pairs{imp}",
                  fontsize=10, loc="left", x=title_x, color="black")
 
 
@@ -439,7 +540,7 @@ def panel_aid(ax, stats, letter):
     ax.set_title(f"{L(letter)}  SHM leaves AID's footprint · "
                  "gene conversion does not\n"
                  "tract-restricted null · " + " · ".join(used),
-                 fontsize=9.5, loc="left", x=-0.135, color="black")
+                 fontsize=9.5, loc="left", x=-0.165, color="black")
 
 
 # ─── assembly ────────────────────────────────────────────────────────────────
@@ -529,6 +630,12 @@ def main():
     ap.add_argument("--igh-j", type=int, required=True)
     ap.add_argument("--igl-j", type=int, required=True)
     ap.add_argument("--network-locus", default="IGL")
+    ap.add_argument("--network-extra", nargs="+", default=[],
+                    help="Additional donor networks, as LOCUS=donor_pool,tracts. "
+                         "Each one gets its own row inside the network slot, so "
+                         "the two loci can be compared side by side without the "
+                         "arcs from a 60-gene array being squeezed into a "
+                         "quarter-width panel.")
     ap.add_argument("--event-source", nargs="+", default=[],
                     help="Extra loci for panel E, as LOCUS=paf,vgene_fasta,tracts. "
                          "Panel E should show both loci -- a reader seeing only "
@@ -597,10 +704,16 @@ def main():
     rowA = 0.60
     rowB = rowA * hB / hA
 
-    fig = plt.figure(figsize=(15.2, 12.4))
+    # The network row is sized from the arc geometry, not by eye: each network
+    # needs height >= rad * its own width or the arcs run off the panel. Giving
+    # the networks the wider column makes that constraint harder, so the row
+    # grows with the number of networks stacked in it.
+    n_net = 1 + len(args.network_extra)
+    fig = plt.figure(figsize=(15.2, 12.4 + 1.6 * (n_net - 1)))
     gs = GridSpec(4, 2, figure=fig,
-                  height_ratios=[rowA, rowB, 1.45, 1.30], hspace=0.62,
-                  wspace=0.18, top=0.955, bottom=0.075)
+                  height_ratios=[rowA, rowB, 1.45, 1.55 * n_net], hspace=0.62,
+                  wspace=0.20, width_ratios=[1.4, 1.0],
+                  top=0.955, bottom=0.075)
 
     panel_architecture(fig.add_subplot(gs[0, :]), genes_by_locus["IGH"], "IGH",
                        args.igh_j, usage, "A", vmax, ext["IGH"])
@@ -613,9 +726,23 @@ def main():
     # same absolute indent, so every panel title starts at the figure margin.
     panel_sequences(fig.add_subplot(gs[2, :]), events, "C", n_distinct, n_calls,
                     title_x=-0.048)
-    panel_network(fig.add_subplot(gs[3, 0]), tracts, pool, usage, rssmap,
-                  args.network_locus, "D", title_x=-0.105)
-    panel_aid(fig.add_subplot(gs[3, 1]), aid, "E")
+
+    # Networks share the left half. With more than one they stack rather than sit
+    # side by side: an IGH array of 60 genes needs the width, and halving it again
+    # would make the arcs unreadable.
+    j_of = {"IGH": args.igh_j, "IGL": args.igl_j}
+    nets = [(args.network_locus, pool, tracts)]
+    for spec in args.network_extra:
+        loc, rest = spec.split("=", 1)
+        e_pool, e_tracts = rest.split(",")
+        nets.append((loc, {r["rearranged_gene"]: r for r in read_tsv(e_pool)},
+                     read_tsv(e_tracts)))
+    sub = GridSpecFromSubplotSpec(len(nets), 1, subplot_spec=gs[3, 0], hspace=0.55)
+    for k, (loc, pl, tr) in enumerate(nets):
+        panel_network(fig.add_subplot(sub[k]), tr, pl, usage, rssmap,
+                      loc, chr(ord("D") + k), title_x=-0.088,
+                      j_pos=j_of.get(loc))
+    panel_aid(fig.add_subplot(gs[3, 1]), aid, chr(ord("D") + len(nets)))
 
     key = [
         Line2D([], [], marker="o", ls="none", ms=8, color=SEGMENT["V"],
@@ -624,11 +751,19 @@ def main():
                markeredgecolor=GREY_DARK, markeredgewidth=0.9,
                label="silent gene — offset shows strand"),
         Line2D([], [], marker="o", ls="none", ms=8, color="white",
-               markeredgecolor="black", label="no RSS (panel D)"),
+               markeredgecolor="black", label="no RSS (network panels)"),
         Patch(facecolor=DONOR_C, label="transcript follows the DONOR"),
         Patch(facecolor=INK, label="transcript follows the parent"),
         Patch(facecolor=OTHER_C, label="matches neither (point mutation)"),
         Patch(facecolor=GREY_DARK, label="parent = donor (uninformative)"),
+        # The network arcs reuse the same three colours, so they need saying
+        # once: what an arc's colour means is not what a base's colour means.
+        Line2D([], [], color=DONOR_C, lw=2.4,
+               label="arc: best-matching donor is possible"),
+        Line2D([], [], color=GREY_DARK, lw=2.4, alpha=0.6,
+               label="arc: best match impossible, this donor is not"),
+        Line2D([], [], color=OTHER_C, lw=2.4,
+               label="arc: no possible donor (drawn below axis)"),
     ]
     fig.legend(handles=key, loc="lower center", ncol=4, fontsize=8.5,
                frameon=True, framealpha=0.95, bbox_to_anchor=(0.5, 0.005))
