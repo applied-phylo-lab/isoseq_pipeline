@@ -1,0 +1,128 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Gene conversion analysis (stage 2) — MATCHED germline (bAgePho2_pri)
+#
+#   snakemake -s Snakefile.geneconv \
+#     --configfile config_geneconv_bAgePho2.yaml --cores 16
+#
+# Locus geometry
+# --------------
+# IGH, contig ptg000161l (428,479 bp):
+#     V genes    11,787 -  77,907   (162)
+#     D cluster 216,424 - 218,900   ( 48 genes in 2.5 kb, 24/48 with a canonical
+#                                     CAC... heptamer -- a real D cluster)
+#     J          not located
+#
+#   The D cluster, not J, sets the direction here.  V starts 11.8 kb into a
+#   428 kb contig, so there is no room for a D cluster upstream of V; the D
+#   cluster therefore lies downstream and the DJ complex is ABOVE the V array.
+#   d_anchor_pos is the V-proximal edge of that cluster.
+#
+#   The J could not be located: no J-like sequence with a splice donor exists on
+#   ptg000161l, and the transcript-derived J motif only hits ptg000006l, a contig
+#   with no IGH V genes that looks like an unrelated repeat family.  The J is
+#   presumably beyond the D cluster in unassembled sequence.
+#
+#   j_strand "+" is supported by the D cluster's RSS orientation.  The cluster is
+#   24 +/24 - by count, but the two strands are not equivalent: the + entries
+#   carry a canonical CAC... upstream heptamer 16/24 times against 8/24 for the
+#   - entries, and the - heptamers are largely reverse complements of the +
+#   ones (CTCAGTG = revcomp CACTGAG, CACCGTG = revcomp CACGGTG).  6 of the 24
+#   minus entries are exact reverse complements of a plus entry over the same
+#   interval, i.e. the same D read backwards.  The real D genes are therefore
+#   the + strand ones and the DJ complex reads +.
+#
+#   Two weaker lines agree: IGH V genes are majority + (92 of 162), and the J
+#   located in the bAgePho0 assembly of this species was on the + strand.
+#
+# IGL, contig ptg000008l:
+#     V genes  6,314,576 - 6,336,602  (23, 22 on + strand)
+#     J        6,339,420 (+)  -- located directly, identical in sequence to the
+#              bAgePho0 IGLJ, so the J is conserved between the two birds.
+#   J sits ABOVE the V array here, the opposite of the bAgePho0 assembly where it
+#   sat below.  The donor pool code keys off j_pos so this is handled, but it
+#   means "allowed donors" are now the LOWER-coordinate genes, not the higher.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+results_dir: "/local/storage/kav67/redwinged_blackbird_isoseq_matched/results_dedup"
+sample: "bAgePho2_bcM0001"
+
+# RSS source: which V genes can be a rearranged parent
+gene_list_csv: "/local/storage/kav67/clean_birds/gene_list.csv"
+source_pattern: "RedWinged_Blackbird/bAgePho2_pri"
+parent_states: ["rss_present"]
+
+python: "/home/kav67/miniconda3/envs/snakemake/bin/python"
+rscript: "/home/kav67/miniconda3/envs/R_env/bin/Rscript"
+
+loci:
+  IGH:
+    min_support_significant: 6
+    vgene_fasta: "data/vgenes/dedup/bAgePho2_pri_IGH.fasta"
+    # J not located; the anchor and orientation come from the D cluster and the
+    # inference documented above. j_pos is set beyond the D cluster only so the
+    # "J is above the V array" geometry is expressed correctly.
+    # ── J STRAND IS AN ASSUMPTION HERE, AND IT WAS TESTED ────────────────────
+    # No J has been located for blackbird IGH (see the header). The SIDE is not
+    # in doubt: the D cluster at 216.4-218.9 kb lies above the V array
+    # (11.8-77.9 kb), and D must sit between V and J, so J is above V whichever
+    # strand the locus reads. Only the STRAND is inferred, from the D cluster's
+    # heptamer orientation.
+    #
+    # Both strands were run through the topology control, which is the only
+    # independent check available. Swapping the strand exactly swaps the
+    # mechanism labels (92 deletional / 70 inversional becomes 70 / 92), so the
+    # two hypotheses are genuinely distinguishable in principle. They are not
+    # distinguishable in this data:
+    #
+    #   m>=   j_strand "+"        j_strand "-"
+    #    4    FDR 0.82            FDR 0.91
+    #    5    FDR 1.11            FDR 0.88
+    #    6    FDR 1.22            FDR 0.91
+    #    8    FDR 2.78            FDR 0.92     (FDR = f/e, see docs)
+    #
+    # FDR ~ 1 under BOTH means the impossible fraction simply tracks the expected
+    # fraction: IGH donor assignment carries no topological signal at all, so the
+    # control has nothing to discriminate with. This is the same verdict reached
+    # for IGH by every other route.
+    #
+    # CONSEQUENCE: no IGH result that depends on the deletion/inversion labelling
+    # should be quoted. The count of tracts with no topologically possible donor
+    # is 8/28 under "+" and 13/28 under "-" -- the number is an artefact of the
+    # assumption, not a measurement. The AID spectrum, which is the primary
+    # evidence, does not use the donor pool and is unaffected.
+    j_pos: 219000
+    j_strand: "+"
+    d_anchor_pos: 216424
+    # All D genes from IGHD.csv regardless of strand, exact and reverse-complement
+    # duplicates collapsed (51 -> 39). The usage search tries both orientations.
+    dgene_fasta: "data/dgenes/bAgePho2_IGHD.fasta"
+    jgene_fasta: "data/jgenes/blackbird_IGHJ.fasta"
+  IGL:
+    min_support_significant: 5
+    vgene_fasta: "data/vgenes/dedup/bAgePho2_pri_IGL.fasta"
+    j_pos: 6339420
+    j_strand: "+"
+    jgene_fasta: "data/jgenes/bAgePho2_IGLJ.fasta"
+    # no D genes in IGL: V joins J directly
+
+# ─── Calling which V genes are really used ────────────────────────────────────
+junction_margin: 20
+functional_min_identity: 0.90
+functional_min_covered_bp: 200
+functional_min_transcripts: 1
+
+# ─── Tract detection ──────────────────────────────────────────────────────────
+min_informative: 3
+# a conversion tract is contiguous donor sequence; without this a "tract"
+# degenerates into diffuse similarity to another gene
+max_gap_bp: 5
+tract_p_threshold: 0.05
+
+# ─── D gene usage ─────────────────────────────────────────────────────────────
+d_min_match: 6
+
+# Significance is called on the number of donor-diagnostic positions,
+# calibrated by permutation + AID spectrum, not on the analytic 3^-m
+# p-value: that models base identity but not CONTIGUITY, which is the
+# constraint actually doing the work, so it penalises the wrong thing.
+tract_correction: "support"

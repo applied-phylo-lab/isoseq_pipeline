@@ -46,12 +46,15 @@ from matplotlib.patches import ConnectionStyle, FancyArrowPatch, Patch, Rectangl
 from Bio import Align
 
 from gc_lib import read_fasta, parse_paf, projected_query
+from gc_tract_fulllength import build as fl_build
 from gc_palette import (save_figure, LOCUS, SEGMENT, GREY, GREY_DARK, INK,
                         YES, NO, ramp)
 
 DONOR_C = YES
 OTHER_C = NO
 UNINF_C = GREY
+# palest tone in the figure: parent and donor identical, so no evidence either way
+UNINF_STRIP = "#E4E7EB"
 
 
 def L(letter):
@@ -229,9 +232,17 @@ def panel_architecture(ax, genes, locus, j_pos, usage, letter, vmax, ylim):
             clip_on=False)
     j_unit = "Mb" if abs(j_pos) >= 1e6 else "kb"
     j_div, j_dec = (1e6, 3) if j_unit == "Mb" else (1e3, 1)
-    ax.annotate(f"J\n{j_pos / j_div:.{j_dec}f} {j_unit}", (jx, 0),
-                textcoords="offset points", xytext=(0, -13), ha="center",
-                va="top", fontsize=7.5, color=SEGMENT["J"], fontweight="bold")
+    # The label goes ABOVE the diamond. Below it collides with the x axis and its
+    # tick labels whenever the J sits near the end of the array, which is exactly
+    # where it sits in IGL. Nudged inward at the panel edge so a right-hand J does
+    # not print past the axis.
+    at_right = jx > (left + right) / 2
+    ax.annotate(f"J {j_pos / j_div:.{j_dec}f} {j_unit}", (jx, 0),
+                textcoords="offset points", xytext=(-6 if at_right else 6, 11),
+                ha="right" if at_right else "left", va="bottom", fontsize=7.5,
+                color=SEGMENT["J"], fontweight="bold", zorder=7,
+                bbox=dict(boxstyle="square,pad=0.10", fc="white", ec="none",
+                          alpha=0.85))
 
     ax.set_xlim(left, right)
     ax.set_ylim(*ylim)
@@ -420,6 +431,53 @@ def panel_network(ax, tracts, pool, usage, rssmap, locus, letter, title_x=0.0,
 
 
 # ─── C: sequence evidence ────────────────────────────────────────────────────
+
+def panel_strips(ax, events, letter, n_distinct, n_calls, title_x=0.0):
+    """Whole-gene view of example tracts, one strip per event.
+
+    This replaces a base-by-base crop of the tract itself. The crop could show
+    that a block of donor-matching bases exists, but not that the transcript
+    goes back to following its PARENT on both sides of it -- and that return to
+    the parent is the whole difference between a conversion tract and a
+    misassigned parent. Showing the entire gene is what makes the claim
+    falsifiable.
+
+    Only informative positions carry colour; where parent and donor are
+    identical (most of the gene) the transcript matches both and the position is
+    drawn pale, because it is evidence for neither.
+
+    Gene names are deliberately omitted. These are illustrative examples, and
+    labelling them invites the reader to treat six hand-picked events as the
+    result rather than as an illustration of it.
+    """
+    xmax = max(e["glen"] for e in events)
+    colour = {"parent": INK, "donor": DONOR_C, "other": OTHER_C,
+              "gap": GREY, "uninf": UNINF_STRIP}
+    n = len(events)
+    for k, e in enumerate(events):
+        y = n - 1 - k
+        for i, cls in e["allcols"]:
+            ax.add_patch(Rectangle((i, y - 0.30), 1.02, 0.60,
+                                   facecolor=colour[cls], edgecolor="none",
+                                   zorder=2))
+        ax.add_patch(Rectangle((e["start"], y + 0.33),
+                               e["end"] - e["start"] + 1, 0.14,
+                               facecolor=SEGMENT["J"], edgecolor="none", zorder=3))
+        ax.text(-6, y, e["locus"], ha="right", va="center", fontsize=8,
+                color=LOCUS.get(e["locus"], INK), fontweight="bold")
+    ax.set_xlim(-46, xmax + 4)
+    ax.set_ylim(-0.7, n - 0.25)
+    ax.set_yticks([])
+    ax.set_xlabel("position in the V gene (bp)", fontsize=8.5)
+    ax.tick_params(labelsize=7.5)
+    for sp in ("left", "right", "top"):
+        ax.spines[sp].set_visible(False)
+    ax.set_title(f"{L(letter)}  {n} example tracts across the whole V gene "
+                 f"(of {n_distinct} distinct tracts, {n_calls} transcript-level "
+                 f"calls)\nthe transcript follows its parent on both sides and the "
+                 f"donor only inside the tract",
+                 fontsize=10, loc="left", x=title_x, color="black")
+
 
 def panel_sequences(ax, events, letter, n_distinct, n_calls, title_x=0.0):
     """n_distinct / n_calls are dataset TOTALS; only len(events) rows are drawn."""
@@ -664,21 +722,31 @@ def main():
     parent_of = {r["transcript"]: r["best_gene"]
                  for r in read_tsv(args.assignments)
                  if r["locus"] == args.network_locus and r["best_gene"] in vgenes}
-    events, n_distinct, n_calls = build_events(
-        args.paf, vgenes, parent_of, tracts, args.flank, args.n_events,
-        args.network_locus)
+    # Panel C events come from the full-length builder, ranked by how well they
+    # demonstrate the switch: the 5' anchor (does the transcript follow the
+    # parent at the conserved end) times the purity (does donor agreement stop
+    # at the tract). Ranking by tract support instead picks the longest tracts,
+    # which are exactly the ones with no flank left to show.
+    def pick(paf, vg, trk, loc, n):
+        ev = fl_build(paf, vg, trk, loc, 0)
+        for e in ev:
+            e["anchor5"] = e["p5_par"] / max(1, e["p5_par"] + e["p5_don"])
+            e["purity"] = e["inside"] / max(1, e["inside"] + e["d_out"])
+        ev.sort(key=lambda e: (-(e["anchor5"] * e["purity"]), -e["inside"]))
+        return ev[:n], len(ev)
+
+    events, n_distinct = pick(args.paf, vgenes, tracts, args.network_locus,
+                              args.n_events)
+    n_calls = sum(1 for t in tracts if t.get("significant") == "True")
     for spec in args.event_source:
         loc, rest = spec.split("=", 1)
         e_paf, e_fa, e_tr = rest.split(",")
         e_vg = read_fasta(e_fa)
-        e_par = {r["transcript"]: r["best_gene"]
-                 for r in read_tsv(args.assignments)
-                 if r["locus"] == loc and r["best_gene"] in e_vg}
-        ev, nd, nc = build_events(e_paf, e_vg, e_par, read_tsv(e_tr),
-                                  args.flank, args.n_events, loc)
+        e_tracts = read_tsv(e_tr)
+        ev, nd = pick(e_paf, e_vg, e_tracts, loc, args.n_events)
         events += ev
         n_distinct += nd
-        n_calls += nc
+        n_calls += sum(1 for t in e_tracts if t.get("significant") == "True")
 
     # Panel C lists loci in the same order as panels A and B, so the reader is
     # not asked to switch orientation halfway down the figure.
@@ -711,9 +779,9 @@ def main():
     n_net = 1 + len(args.network_extra)
     fig = plt.figure(figsize=(15.2, 12.4 + 1.6 * (n_net - 1)))
     gs = GridSpec(4, 2, figure=fig,
-                  height_ratios=[rowA, rowB, 1.45, 1.55 * n_net], hspace=0.62,
+                  height_ratios=[rowA, rowB, 1.05, 1.55 * n_net], hspace=0.62,
                   wspace=0.20, width_ratios=[1.4, 1.0],
-                  top=0.955, bottom=0.075)
+                  top=0.955, bottom=0.135)
 
     panel_architecture(fig.add_subplot(gs[0, :]), genes_by_locus["IGH"], "IGH",
                        args.igh_j, usage, "A", vmax, ext["IGH"])
@@ -724,7 +792,7 @@ def main():
     # what a tract actually is first.
     # -0.048 on a full-width panel and -0.105 on a half-width one work out to the
     # same absolute indent, so every panel title starts at the figure margin.
-    panel_sequences(fig.add_subplot(gs[2, :]), events, "C", n_distinct, n_calls,
+    panel_strips(fig.add_subplot(gs[2, :]), events, "C", n_distinct, n_calls,
                     title_x=-0.048)
 
     # Networks share the left half. With more than one they stack rather than sit
@@ -755,7 +823,9 @@ def main():
         Patch(facecolor=DONOR_C, label="transcript follows the DONOR"),
         Patch(facecolor=INK, label="transcript follows the parent"),
         Patch(facecolor=OTHER_C, label="matches neither (point mutation)"),
-        Patch(facecolor=GREY_DARK, label="parent = donor (uninformative)"),
+        Patch(facecolor=UNINF_STRIP, label="parent = donor (no evidence)"),
+        Patch(facecolor=GREY, label="not covered by the transcript"),
+        Patch(facecolor=SEGMENT["J"], label="called tract"),
         # The network arcs reuse the same three colours, so they need saying
         # once: what an arc's colour means is not what a base's colour means.
         Line2D([], [], color=DONOR_C, lw=2.4,
@@ -765,8 +835,9 @@ def main():
         Line2D([], [], color=OTHER_C, lw=2.4,
                label="arc: no possible donor (drawn below axis)"),
     ]
-    fig.legend(handles=key, loc="lower center", ncol=4, fontsize=8.5,
-               frameon=True, framealpha=0.95, bbox_to_anchor=(0.5, 0.005))
+    fig.legend(handles=key, loc="lower center", ncol=5, fontsize=8.2,
+               frameon=True, framealpha=0.95, bbox_to_anchor=(0.5, 0.008),
+               borderpad=0.7, columnspacing=1.5)
 
     save_figure(fig, args.out)
     print(f"wrote {args.out}", file=sys.stderr)

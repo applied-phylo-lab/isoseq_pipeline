@@ -12,6 +12,7 @@ Chain
   locus_architecture    does gene placement match cis-deletional conversion
   detect_tracts         conversion tracts scored against an SHM null
   topology_test         do the calls respect the recombination topology
+  donor_distance        are close donors preferred, once detection bias is out
   brepconvert           the published tool, on the same transcripts
   compare_methods       both methods through the same negative control
   aid_spectrum          SHM vs conversion from the mutation spectrum alone
@@ -49,6 +50,9 @@ rule all:
         expand(f"{OUT}/{{locus}}_locus_architecture.tsv", locus=LOCI),
         expand(f"{OUT}/{{locus}}_tracts.tsv", locus=LOCI),
         expand(f"{OUT}/{{locus}}_topology_test.tsv", locus=LOCI),
+        expand(f"{OUT}/{{locus}}_donor_distance.txt", locus=LOCI),
+        expand(f"{OUT}/SUPP_{{locus}}_donor_distance.pdf", locus=LOCI),
+        expand(f"{OUT}/SUPP_{{locus}}_donor_usage_map.pdf", locus=LOCI),
         expand(f"{OUT}/{{locus}}_method_comparison.tsv", locus=LOCI),
         expand(f"{OUT}/{{locus}}_aid_spectrum.pdf", locus=LOCI),
         expand(f"{OUT}/{{locus}}_d_usage.pdf", locus=D_LOCI),
@@ -211,6 +215,73 @@ rule detect_tracts:
         "--out-tracts {output.tracts} --out-summary {output.summary} 2>{log}"
 
 
+rule donor_distance:
+    """
+    Test the published claim that gene conversion prefers donors close to the
+    parent -- close in sequence, or close on the chromosome.
+
+    The whole test is a correction for detection bias, so it takes the same
+    m and max_gap_bp the detector ran with: opportunity is defined in terms of
+    the windows those two parameters allow.
+    """
+    input:
+        script="scripts/gc_donor_distance.py",
+        tracts=f"{OUT}/{{locus}}_tracts.tsv",
+        vgenes=lambda wc: lc(wc, "vgene_fasta"),
+        paf=f"{ALIGN}/{{locus}}_detailed.paf",
+        assignments=f"{OUT}/transcript_assignments.tsv",
+        pool=f"{OUT}/{{locus}}_donor_pool.tsv",
+    output:
+        table=f"{OUT}/{{locus}}_donor_distance.tsv",
+        report=f"{OUT}/{{locus}}_donor_distance.txt",
+        figure=f"{OUT}/SUPP_{{locus}}_donor_distance.pdf",
+    params:
+        min_support=lambda wc: lc(wc, "min_support_significant"),
+        max_gap=config.get("max_gap_bp", 5),
+        unit=config.get("donor_distance_unit", "event"),
+        offset=config.get("donor_distance_offset", "expected"),
+        j_pos=lambda wc: lc(wc, "j_pos"),
+        sample=SAMPLE,
+    log:
+        f"{RESULTS}/logs/geneconv/{{locus}}_donor_distance.log",
+    shell:
+        "{PY} {input.script} --tracts {input.tracts} "
+        "--vgene-fasta {input.vgenes} --paf {input.paf} "
+        "--assignments {input.assignments} --donor-pool {input.pool} "
+        "--locus {wildcards.locus} --dataset {params.sample} "
+        "--min-support {params.min_support} --max-gap-bp {params.max_gap} "
+        "--unit {params.unit} --offset {params.offset} "
+        "--j-pos {params.j_pos} "
+        "--out-table {output.table} --out-report {output.report} "
+        "--out-figure {output.figure} 2>{log}"
+
+
+rule donor_usage_map:
+    """
+    The distance result drawn along the locus instead of as a rate ratio: a
+    per-gene track where the array has one parent, a donor x parent grid where
+    it has several, and in both cases the observed usage against what
+    detectability alone predicts.
+    """
+    input:
+        script="scripts/gc_donor_usage_map.py",
+        table=f"{OUT}/{{locus}}_donor_distance.tsv",
+        report=f"{OUT}/{{locus}}_donor_distance.txt",
+    output:
+        f"{OUT}/SUPP_{{locus}}_donor_usage_map.pdf",
+    params:
+        j_pos=lambda wc: lc(wc, "j_pos"),
+        unit=config.get("donor_distance_unit", "event"),
+        sample=SAMPLE,
+    log:
+        f"{RESULTS}/logs/geneconv/{{locus}}_donor_usage_map.log",
+    shell:
+        "{PY} {input.script} --table {input.table} --report {input.report} "
+        "--locus {wildcards.locus} --dataset {params.sample} "
+        "--j-pos {params.j_pos} --unit {params.unit} "
+        "--out-figure {output} 2>{log}"
+
+
 rule topology_test:
     input:
         script="scripts/gc_topology_test.py",
@@ -232,6 +303,13 @@ rule aid_spectrum:
         vgenes=lambda wc: lc(wc, "vgene_fasta"),
         assignments=f"{OUT}/transcript_assignments.tsv",
         tracts=f"{OUT}/{{locus}}_tracts.tsv",
+        # Needed for clone-aware counting. Without it every member of an expanded
+        # clone contributes its differences independently, which is
+        # pseudoreplication: 520 IGL transcripts are only 396 clones, and the
+        # inside-tract class is the one dominated by expanded clones. Omitting
+        # this silently produced a different answer from the published one
+        # (inside hotspot x0.98 rather than x0.49).
+        transcripts=f"{ALIGN}/combined_ig_transcripts.fasta",
     output:
         fig=f"{OUT}/{{locus}}_aid_spectrum.pdf",
         stats=f"{OUT}/{{locus}}_aid_spectrum.tsv",
@@ -240,6 +318,7 @@ rule aid_spectrum:
     shell:
         "{PY} {input.script} --paf {input.paf} --vgene-fasta {input.vgenes} "
         "--assignments {input.assignments} --tracts {input.tracts} "
+        "--transcripts {input.transcripts} "
         "--locus {wildcards.locus} --out-figure {output.fig} "
         "--out-stats {output.stats} 2>{log}"
 

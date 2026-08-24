@@ -1,0 +1,210 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Gene conversion analysis (stage 2) — tufted duck (bAytFul2_pri)
+#
+#   snakemake -s Snakefile.geneconv \
+#     --configfile config_geneconv_tufted_duck.yaml --cores 16
+#
+# What this run is for
+# --------------------
+# A second species, analysed exactly as the red-winged blackbird was, to see
+# whether the same signatures appear.  The duck data are older and shallower
+# (Sequel-era IsoSeq, six runs pooled) so the counts are smaller, and the sample
+# provenance differs from the blackbird's in a way that matters -- see below.
+#
+# Stage 1 was NOT re-run.  It is already complete for all six SRR accessions, and
+# none of it changed: skera does not apply here at all (this is plain IsoSeq, not
+# a Kinnex array), and the alignment and filtering steps are untouched.  Only
+# stage 2 and the figures are new.
+#
+# Sample "pooled"
+# ---------------
+# The six runs are individually too small (4-484 IG transcripts) and are split by
+# locus -- SRR13570364 is 92% IGH, SRR13570377 is 90% IGL.  Transcript IDs are
+# already prefixed with their accession, so the per-sample PAFs concatenate
+# without collision.
+#
+# Only the minimap2-filtered transcripts are pooled, NOT the merged set.
+# immunotools and minimap2 share ZERO transcripts here (merge_stats reports
+# in_both = 0 for every run) because immunotools was run with different sequence
+# IDs, so its 46k calls cannot be reconciled with minimap2's 484 and the "union"
+# is meaningless.  Using the strict set gives 483 IGH + 283 IGL, which is also
+# the comparable choice: in the blackbird the two filters agreed almost exactly,
+# so that run was effectively the strict set too.
+#
+#   Sample provenance (checked against Mueller et al. 2021, GigaScience 10:giab081)
+#   ------------------------------------------------------------------------
+#   Both the assembly DNA and the Iso-Seq RNA come from the SAME cohort, not from
+#   unrelated studies.  Verbatim from the Methods:
+#
+#     "Captive-bred, wild tufted ducks were kept at the animal breeding facility
+#      (Swedish National Veterinary Institute, Uppsala) ... Tissue samples were
+#      obtained from 5 females and 5 males (12 months old) after euthanasia ...
+#      The following tissues were collected from the birds: brain, ileum, spleen,
+#      lung, and gonads (ovary or testis)."
+#     "To obtain both sex chromosomes, DNA was extracted from lung tissue of a
+#      female tufted duck."
+#
+#   So the assembly female is one of those ten birds -- the DNA lung tissue came
+#   from the same dissection.  An earlier note in this file called the RNA and
+#   germline "different animals"; that was WRONG and has been removed.
+#
+#   But it is NOT a clean matched-individual design either.  Iso-Seq was run once
+#   per TISSUE (six runs: brain, ileum, lung, ovary, spleen, testis -- Table 2),
+#   drawn from a cohort of ten birds, and both ovary and testis appear, so at
+#   least one male and one female contributed.  The methods say only that
+#   "technical replicates were pooled"; they never state whether RNA was pooled
+#   across INDIVIDUALS within a tissue, and with 10 birds and 6 tissue libraries
+#   it must be either one bird per tissue or a biological pool.
+#
+#   Either way the transcripts are scored against ONE haploid reference while
+#   originating from up to ten animals.  That is a different confound from the
+#   blackbird's (one bird, one matched assembly) and arguably a worse one for the
+#   AID test: germline polymorphism between individuals is not AID-targeted, so
+#   it adds hotspot-neutral differences to the "outside tract" class and dilutes
+#   the enrichment.  It is a plausible contributor to duck IGL sitting at x1.12
+#   where the blackbird reaches x2.24.
+#
+# Locus geometry
+# --------------
+# IGH, contig WNMM01000072.1 (294,789 bp):
+#     V genes  195,546 - 230,950  (60; 29 +, 31 -)
+#     J        ~188,668           the CODING END of the J segment
+#     C        ~157,400            constant region
+#
+#   CAUTION, learned the hard way: blasting the whole post-V portion of a
+#   transcript finds the CONSTANT region, not J -- it is far longer and dominates
+#   the hits.  That first gave a "J" at 157.4 kb whose hits averaged 293 bp and
+#   began 52 bp after the V end, i.e. an exon downstream of the real J.  Blasting
+#   only the first 70 bp after the V end isolates D+J and gives a clean cluster
+#   of 206 hits at 188.6-189.5 kb with mean length 37 bp, which is J-sized.
+#   j_strand "-" is confirmed by translation: the region carries the canonical
+#   IGHJ C-terminus "...GSIDLWGHGTEVTVS..." on the MINUS strand at ~188,668
+#   (cf. human IGHJ4 WGQGTLVTVSS), with a CACAGTG heptamer upstream on the same
+#   strand.  The locus therefore reads right-to-left: V (195-231 kb) -> D ->
+#   J (188.7 kb) -> C (157 kb).  The 31 minus-strand V genes are the deletional
+#   ones.
+#
+#   EXHAUSTIVE J SEARCH (asked for explicitly, because the alternative reading
+#   would contradict the standard post-rearrangement model of gene conversion):
+#     1. Junction-only blast across the whole 294,789 bp contig: one dominant
+#        cluster, 206 hits at 188.6-189.5 kb. Above the V array (>231 kb) there
+#        are 32 scattered hits over 64 kb and no cluster at all.
+#     2. Six-frame translation of the ENTIRE contig, both strands, for the full
+#        IGHJ C-terminus W-G-x-G-T-x-[VLIAM]-T-V-[SA]: exactly ONE hit in the
+#        whole contig -- 188,649 (-), "GAAGSIDLWGHGTEVTVSSGKS".
+#     3. The looser W-G-x-G-T pattern gives 16 hits; the only ones above the V
+#        array are four copies of a tandem repeat at 271.96-272.18 kb spaced
+#        39 bp apart ("PLWGRSPLWGWGTPLWG"), low-complexity and with no VTVS
+#        continuation. Not J genes.
+#     4. Blasting the J segment itself against the whole GENOME returns exactly
+#        one hit: itself. No paralogue anywhere.
+#   So there is no J on the plus strand and none above the V cluster. The
+#   geometry below is what this assembly contains.
+#
+#   ASSEMBLY ERROR RULED OUT.  bAytFul3.1 (GCA_976225485.1, 2025, a DIFFERENT
+#   individual) places D and J on the same side of the V array as bAytFul2.  Two
+#   independent assemblies agree, so the J-distal functional gene is real geometry,
+#   not a misjoin.
+#
+#   WHICH TISSUE / WHICH BIRD.  Mapping run -> tissue via Table 2 subread counts:
+#       SRR13570362 Ovary  (4 IG tx)    SRR13570363 Lung   (12)
+#       SRR13570364 Ileum  (484)        SRR13570365 Brain  (3)
+#       SRR13570376 Testis (91)         SRR13570377 Spleen (172)
+#   Ovary and testis are sex-specific, so at least two different birds contributed.
+#
+#   The IGH result is essentially ONE tissue: 103 of 104 tract calls come from the
+#   ileum run alone, which supplies 145 of the 154 IGH transcripts analysed.  And
+#   ALL 60 distinct IGH tracts are private to a single run -- none recurs in
+#   another tissue.  IGL behaves the same way: 28 distinct tracts, 0 shared across
+#   runs.
+#
+#   That pattern is what germline POLYMORPHISM looks like.  If the tracts were
+#   somatic conversion onto a shared germline, tracts would be transcript-private
+#   but the donor-parent PAIRS would recur across tissues, because every bird has
+#   the same donor array.  Instead nothing is shared, which fits transcripts from
+#   different birds each carrying their own alleles and being scored against the
+#   single assembly female.
+#
+#   So: NOT a claim of pre-rearrangement conversion.  The ranked explanations are
+#     1. the transcripts carry OTHER birds' germline alleles, which look like
+#        conversion tracts against a single haploid reference;
+#     2. donor attribution is simply wrong (the verdict the topology control also
+#        reached for blackbird IGH);
+#     3. genuine pre-rearrangement conversion -- possible but the least supported,
+#        and not separable with these data.
+#   Discriminating test if it matters: check whether the tract-bearing transcript
+#   sequences match a bAytFul3.1 germline V allele.  If they do, it is
+#   polymorphism, not conversion.
+#
+#   CONSEQUENCE, recorded rather than tuned away: the only expressed RSS-bearing
+#   IGH parents are at 229,918 and 230,950 -- the far end of the array from J.
+#   A deletional rearrangement from there loops out 189-231 kb, i.e. every other
+#   V gene, leaving 0 and 3 surviving donors respectively.  So 104/104 IGH tracts
+#   use a donor that recombination had already removed.  That is the mirror image
+#   of the blackbird IGL (parent J-proximal, nothing deleted, 0% impossible) and
+#   it says the IGH donor attribution here cannot be trusted -- the same verdict
+#   the topology control reached for blackbird IGH.  Setting j_strand "+" would
+#   make the number look good by reclassifying those parents as inversional, but
+#   the WGxG evidence does not support it.
+#
+# IGL, contig CM020316.1:
+#     V genes  9,499,450 - 9,569,126  (51 of 61; 48 on + strand)
+#     J        ~9,578,337 (+)         found the same way (110 hits at ~9,578 kb)
+#   J sits ABOVE the V array and 48/51 V genes are +, i.e. deletional -- the same
+#   architecture as the blackbird IGL.
+#
+#   The other 10 IGL V genes sit on THREE other chromosomes (CM020300.1,
+#   CM020302.1, CM020335.1), tens of megabases away.  Cis-acting conversion
+#   requires the same chromosome, so they cannot be donors for this locus and are
+#   excluded; tufted_duck_IGL_locus.fasta is the main-contig subset.  They carry
+#   89 of 727 IGL alignments, so this is not a trivial exclusion and is worth
+#   stating in any writeup.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+results_dir: "/local/storage/kav67/tufted_duck/results_dedup"
+sample: "pooled"
+
+# RSS source: which V genes can be a rearranged parent.
+# Same curated screen as the blackbird, different row set.
+#   IGH  7 of 62 V genes carry a heptamer
+#   IGL 15 of 61
+gene_list_csv: "/local/storage/kav67/clean_birds/gene_list.csv"
+source_pattern: "Tufted_Duck/bAytFul2_pri"
+parent_states: ["rss_present"]
+
+python: "/home/kav67/miniconda3/envs/snakemake/bin/python"
+rscript: "/home/kav67/miniconda3/envs/R_env/bin/Rscript"
+
+loci:
+  IGH:
+    # Calibrated for THIS dataset, not inherited from the blackbird. The
+    # permutation null gives FDR ~0 from m>=4 in both duck loci, and the AID
+    # spectrum shows inside-tract differences already free of the targeting
+    # footprint at m>=4 (IGH 0.83x, IGL 0.90x), so 4 is both safe and the most
+    # sensitive choice. The blackbird needed 5/6 because it searches a larger
+    # donor pool; reusing its numbers here left only 2 IGH and 4 IGL tracts.
+    min_support_significant: 4
+    vgene_fasta: "data/vgenes/dedup/tufted_duck_IGH.fasta"
+    j_pos: 188668
+    j_strand: "-"
+  IGL:
+    min_support_significant: 4
+    vgene_fasta: "data/vgenes/dedup/tufted_duck_IGL_locus.fasta"
+    j_pos: 9578337
+    j_strand: "+"
+
+# ─── Calling which V genes are really used ────────────────────────────────────
+junction_margin: 20
+functional_min_identity: 0.90
+functional_min_covered_bp: 200
+functional_min_transcripts: 1
+
+# ─── Tract detection ──────────────────────────────────────────────────────────
+min_informative: 3
+max_gap_bp: 5
+tract_p_threshold: 0.05
+tract_correction: "support"
+
+# ─── D gene usage ─────────────────────────────────────────────────────────────
+# No D annotation available for this assembly, so the D usage step is not run.
+d_min_match: 6

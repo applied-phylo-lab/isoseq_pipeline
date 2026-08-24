@@ -502,6 +502,131 @@ positions are hotspot-neutral (10.7% vs 10.2% background).
 
 ---
 
+### 12. Are closer donors used more often?
+
+A long-standing claim from chicken IGL is that gene conversion prefers donors
+close to the rearranged gene: close in sequence (the most similar pseudogenes
+supply most tracts) and close on the chromosome. `gc_donor_distance.py` tests
+both, per locus, then pools.
+
+**Why the obvious version of this analysis is worthless.** Tracts are called from
+*informative positions* — places where parent and donor differ. A donor 99%
+identical to its parent leaves almost nothing to detect and can never produce a
+significant tract however often it is used; a donor 85% identical offers
+informative positions everywhere. Detection power rises with distance, which is
+the axis under test, in the direction opposite to the claim. In blackbird IGL the
+correlation between plain window-counting opportunity and divergence is
+ρ = +0.89. Plotting usage against identity measures the detector.
+
+So the test conditions on detectability. For each (parent, donor) pair it counts
+the places a significant tract *could* have been called — windows of m
+informative positions spaced no more than `max_gap_bp` apart, inside the region
+the transcripts cover, using the same m and gap the detector ran with. Pairs with
+zero such windows never entered the competition and are dropped (4 of 21 in
+blackbird IGL, at 84.0–92.3% identity; 52 of 155 in IGH, up to 98.3%).
+
+**A second confound, which the window count does not fix.** A donor nearly
+identical to its parent differs from it only in a few clusters, and those
+clusters are the hypervariable ones — which is exactly where the transcripts also
+differ from the parent. The few windows a similar donor offers therefore sit
+where a hit is most likely, so plain window counting understates its
+detectability and manufactures the result. The default `--offset expected`
+weights each window by the parent's own per-position mutation frequency,
+computed **outside** the transcripts' own called tracts so the correction does
+not condition on the events under test. This matters enormously: in blackbird IGL
+the divergence effect is RR 0.78 per 1% (p = 2×10⁻⁸) under plain window counting
+and RR 0.90 (p = 0.11) under the weighted version. Most of the apparent
+preference for close donors is detection bias.
+
+**Three tests, same conditioning.** A conditional logit over each parent's donor
+pool (the primary test — parent is the stratum, so pool composition, array
+position and transcript depth all cancel); the same null as a permutation, which
+assumes nothing asymptotic at these counts; and plain Spearman, reported only to
+show what the uncorrected analysis would have claimed.
+
+**Physical distance is parameterised three ways, because they are not
+interchangeable.** `distance_kb` is linear kb, the natural scale for arrays this
+size; `rank_distance` counts intervening V genes, which is how "the nearest
+pseudogenes supply most tracts" is normally meant and is immune to uneven gene
+spacing; `log10_distance` is per tenfold, which is a poor model here — blackbird
+IGL spans 1.9–22 kb, barely one decade. With `--j-pos` a `toward_j` term also
+asks which *side* of the parent the donor sits on, since a locus can show no
+distance effect and still be polarised.
+
+**Sequence and physical distance are confounded with each other**, so both go
+into one model as well as separately. In a tandem array neighbours are recent
+duplicates and therefore also similar, and here the correlation is *negative* in
+both IGL loci (ρ = −0.31, p = 0.002 in duck IGL): more distant donors are more
+similar. A marginal slope on either covariate carries the other inside it. The
+`*_given_*` rows in the report are the partial slopes, each holding the other
+fixed, and those are the ones to quote.
+
+**The unit is the distinct event**, one (parent, donor, start, end). Transcripts
+are clonally related, so counting them counts clone size — the report gives all
+three units and the transcript-level p-values are, predictably, absurd
+(p = 9×10⁻⁴⁴ in IGL from 19 independent events).
+
+**Ambiguous tracts are dropped by default.** Where several donors explain a tract
+equally, the detector's tie-break is alphabetical, i.e. by contig position, which
+would fabricate a genomic-distance signal. `--ties keep` includes them at weight
+1/k as a sensitivity check.
+
+#### The answer
+
+Partial slopes, event unit, each holding the other covariate fixed:
+
+| locus | events | per 1% divergence | per 10 kb along the locus | per intervening V gene |
+|---|---|---|---|---|
+| blackbird IGL | 19 | RR 0.92 | RR 1.62 | RR 1.05 |
+| blackbird IGH | 13 | RR 0.78 | RR 1.52 | RR 1.03 |
+| duck IGL | 2 | RR 0.86 (not pooled) | RR 5.51 (not pooled) | RR 1.17 (not pooled) |
+| duck IGH | 15 | RR 0.97 | RR 1.36 | RR 1.02 |
+| **pooled** | | **0.967 [0.932, 1.003], p = 0.069** | **1.487 [1.107, 1.999], p = 0.0085** | **1.028 [1.006, 1.050], p = 0.013** |
+
+**Sequence proximity: direction consistent, effect small, not significant.** All
+four slopes are negative — closer-in-sequence donors used more — a 4/4 sign test
+at p = 0.063, pooled just off the line at p = 0.069, no heterogeneity. Over the
+observed divergence range this is roughly a threefold preference for the most
+similar donors over the most distant. Consistent with the published claim, and
+not on its own evidence for it.
+
+**Physical proximity: the effect is significant and runs the *opposite* way to
+the published claim.** Donors further along the locus are used *more*, by about
+1.5× per 10 kb and 1.03× per intervening gene, all four loci in the same
+direction, with no heterogeneity (Q = 0.14, p = 0.93). This is the most
+statistically secure result in the analysis, and it is not what chicken IGL
+reports.
+
+Three checks say it is not an artefact. It survives mutual adjustment and in fact
+*strengthens* (marginal RR 1.41 → partial 1.49), so it is not the sequence effect
+in disguise — the two covariates are largely independent here. It holds under
+both detectability models, unweighted window counting and the SHM-weighted one,
+which is the correction that demolished most of the sequence effect. And it is
+not censoring: the near-identical pairs dropped for zero opportunity are *not*
+systematically the nearby ones in the three pooled loci (Mann-Whitney p = 0.90,
+0.25, and none dropped), though they are in duck IGL (p = 0.0098), which is
+excluded from the pool for having two events.
+
+**Directionality is untestable in two of the four loci.** `toward_j` is not
+identified in blackbird IGL or duck IGH: each has a single tract-bearing parent
+sitting at the end of its array, so every candidate donor lies on the same side
+of it and there is no contrast. Where it can be fitted (blackbird IGH) it is flat
+(RR 1.23, p = 0.79). This is the same vacuity the topology test hits, reached
+from a third direction — the tract-bearing parents sit exactly where positional
+tests have no power.
+
+Three caveats bound all of this. Every effect is measured against a
+detectability model, and a model that is wrong in either direction moves the
+answer — the swing between the two offsets above shows how much. Duck IGL
+contributes two events; it is drawn in the forest plot and counted in the sign
+test, but its slope is not identified and is excluded from the pool
+(`--min-events`). And the analysis is silent about the very closest donors: pairs
+with zero detection opportunity — up to 98.3% identity in IGH — never entered the
+competition, and those are precisely the class the chicken claim is about. What
+is tested is donor choice among donors that *could* have been seen.
+
+---
+
 ## What did *not* work — stated plainly, because two figures show it
 
 **The topology test is vacuous in both loci.** It was designed to test the
@@ -618,6 +743,27 @@ There is deliberately **no overall title** — that belongs in the manuscript te
 and every panel title is black, including the two locus panels, so colour is not
 doing double duty as both a locus code and a heading style.
 
+### `SUPP_{IGL,IGH}_donor_distance.pdf` — donor choice vs distance, per locus
+
+One row per covariate — sequence divergence, linear kb along the locus, array
+rank, log10 bp, and the J-side indicator. **Left**, the confound — detectability against the covariate,
+rose for donors that were used. **Middle**, what the uncorrected analysis sees:
+events per donor against the covariate. **Right**, the test — the observed mean
+covariate of used donors (rose line) against 20,000 draws that pick donors from
+the same pool in proportion to detectability alone. Grey points are candidate
+donors never used. See §12 for why the left panel is the whole problem.
+
+### `SUPP_donor_distance_pooled.pdf` — the four loci together
+
+Forest plot of the conditional-logit slope as a usage rate ratio, one panel per
+covariate. The bottom row holds the partial slopes — each covariate at fixed
+value of the other — and those are the ones to quote. Below 1
+means closer donors are used more, i.e. the published claim. Marker area scales
+with events; whiskers are 95% CI, arrow-capped where they run off the axis. The
+rose diamond is the fixed-effect pool. Duck IGL (2 events) is drawn in grey and
+excluded from the pool — its slope is not identified — but still counts in the
+sign test, which uses direction only.
+
 ### `IG_overview.pdf` — start here
 
 | Panel | What it shows |
@@ -691,6 +837,14 @@ longest chord still lands inside, and the main figure clamps each side against
 the height that side will actually be given (the axis opens asymmetrically when
 only one side carries arcs, so a single long rose arc must not flatten every teal
 one).
+
+> **`--transcripts` is not optional.** Without it every member of an expanded
+> clone contributes its differences independently, which is pseudoreplication:
+> 520 IGL transcripts are only 396 clones, and the inside-tract class is the one
+> dominated by expanded clones. Omitting it changes the IGL inside-tract hotspot
+> from ×0.49 to ×0.98 and silently disagrees with the published figure. The
+> Snakefile rule now passes it; it previously did not, so any `{locus}_aid_spectrum.tsv`
+> produced by an older run of the pipeline should be regenerated.
 
 The main-figure networks draw the **J gene** as a teal diamond at whichever end
 it sits. Without it the duck IGH panel showed an unexplained fan of red: J lies
@@ -1073,6 +1227,48 @@ make that number look good by reclassifying them as inversional, but the WGxG
 evidence does not support it. The honest reading is that duck IGH donor
 attribution is untrustworthy — the same verdict the topology control reached for
 blackbird IGH.
+
+## Duplicate V gene annotations (same DNA, both strands)
+
+The V gene annotation lists some loci **twice**: two entries whose genomic
+intervals overlap, on opposite strands, whose forward-strand sequence is
+identical over the shared block. A V gene's reverse complement still scores
+against V profiles, so an annotator scanning both strands emits a hit on each.
+
+This is **not** the tandem duplication that fills a V array. Tandem duplicates
+sit at different coordinates and are 90-99% similar; these sit at the same
+coordinates and are 100% identical to themselves.
+
+| | annotated entries | overlapping pairs | distinct loci |
+|---|---|---|---|
+| bAgePho2 IGH | 162 | **59** (58/59 identical over the overlap) | **103** |
+| bAgePho2 IGL | 23 | 1 | 22 |
+| duck IGH | 60 | 26 | 34 |
+| duck IGL | 51 | 1 | 50 |
+
+**Which member is real.** Only one member can carry the V reading frame -- the
+reverse complement of a V exon is not a V exon. `scripts/gc_dedup_annotations.py`
+translates each entry in its own declared orientation and scores the V domain
+hallmarks (FR2 `W[VILM]RQ`, `[LIV]EW[VILMA]`, FR3 `Y[YFH]C`). On bAgePho2 IGH the
+test is unanimous: in all 59 pairs the loser scores **zero** motifs and the winner
+1-3. It agrees with two independent annotations -- the winner carries the RSS in
+18 of 18 informative pairs and the transcripts in 23 of 24.
+
+**What collapsing changes: denominators, and nothing else.** Rerunning stage 2 on
+the deduplicated FASTA (with the PAFs filtered to the kept targets, which is
+equivalent to having aligned against it) reproduces the tract calls **exactly** --
+IGH 42 calls / 28 pairs, IGL 123 / 10 -- and every AID value is byte-identical.
+What moves is "25 of 162 IGH V genes carry an RSS" becoming 25 of 103, and the
+`n possible pairs` denominators in the network panels.
+
+> Nor could a tract call have changed: no donor -> parent pair in either locus is
+> an overlap pair, and both members point at the same DNA, so as a conversion
+> donor they are one option rather than two.
+
+Config `config_geneconv_bAgePho2_dedup.yaml`, output
+`results_dedup/`, report `{locus}_dedup_report.tsv`, figure
+`SUPP_IGH_overlapping_annotations`.
+
 
 ## Colour conventions
 
